@@ -68,7 +68,7 @@ class LispClient:
     def del_kv(cls, class_name: str, key: str) -> Dict[str, Any]:
         """Applica una cancellazione logica (tombstone) sul record."""
         return cls._esegui_comando("DelKV", class_name, key=key)
-    
+    '''
     # --- BLOCCO DI TEST ---
 if __name__ == "__main__":
     print(f"Tentativo di connessione al Client Lisp su {LISP_HOST}:{LISP_PORT}...")
@@ -78,3 +78,4 @@ if __name__ == "__main__":
     
     print("\nRisposta ricevuta:")
     print(json.dumps(risposta, indent=2))
+    '''
