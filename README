@@ -1,0 +1,11 @@
+Ecco l'ordine esatto in cui procedere allo sviluppo, formattato in Markdown, pronto per essere convertito o inserito nei tuoi documenti:
+
+Livello 1 (fabric/): Questo è il punto di partenza obbligato. Devi scrivere il wrapper (lisp_client.py) per incapsulare i comandi Lisp (AddKV, GetKV, GetKeyHistory, DelKV) che dialogheranno direttamente con la rete Hyperledger Fabric.
+
+Livello 2 (schemas/): Subito dopo, definisci gli strumenti per l'integrità dei dati. Implementa la validazione generica tramite jsonschema e definisci gli schemi esatti e le convenzioni per le chiavi (namespacing) di utenti, appelli, voti e carriere.
+
+Livello 4 (security/): Prima di poter sviluppare le regole di business, ti servono gli strumenti di sicurezza di base. Qui dovrai sviluppare le funzionalità trasversali per il controllo accessi (RBAC), la verifica e generazione dei token JWT, la crittografia delle password con algoritmo bcrypt e il logger per l'audit.
+
+Livello 3 (services/): Avendo pronti i controlli di sicurezza e l'accesso ai dati, puoi ora implementare il motore applicativo (Business Logic & Chain-of-Events Engine). Qui integrerai la logica per gestire l'onboarding, creare gli appelli, validare le prenotazioni con le relative propedeuticità e intercettare le anomalie previste (da U1 a U6).
+
+Livello 5 (routes/): Infine, concludi esponendo i RESTful API Controllers verso l'esterno. In questi file leggeri assocerai le route HTTP ai servizi appena creati, estrarrai i parametri dai payload JSON e restituirai al client le risposte strutturate con i codici di stato standard (200 OK, 400, 401, ecc.)

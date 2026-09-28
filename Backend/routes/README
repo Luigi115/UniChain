@@ -1,0 +1,1 @@
+#Il suo scopo principale è garantire l'integrità del database chiave-valore di Fabric e neutralizzare tempestivamente attacchi di Lisp Command Injection bloccando payload contenenti caratteri o campi malevoli.

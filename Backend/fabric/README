@@ -1,0 +1,5 @@
+#Questo modulo agisce come driver a basso livello. È l'unico strato del backend autorizzato a dialogare con il perimetro della Restricted Zone. Si occupa di serializzare i comandi verso il Client Lisp, inoltrarli via rete e interpretare le risposte grezze della blockchain.
+#lisp_client.py) è l'unico componente del nostro backend autorizzato a comunicare con la Restricted Zone, l'area blindata dove risiede la blockchain
+#
+#
+#
