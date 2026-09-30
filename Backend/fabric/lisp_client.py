@@ -1,10 +1,11 @@
 import json
 import socket
 from typing import Any, Dict, Optional
+from config import Config
 
-# Configurazione del "telefono" verso il Client Lisp nella Restricted Zone
-LISP_HOST = "160.80.216.209"  # L'IP pubblico del server indicato dal collega
-LISP_PORT = 9999              # La porta di ascolto (verifica col collega se è 9999 o un'altra!)
+# Configurazione del "telefono" verso il Client Lisp caricata dinamicamente
+LISP_HOST = Config.LISP_HOST
+LISP_PORT = Config.LISP_PORT
 
 class LispClient:
     """

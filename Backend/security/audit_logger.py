@@ -11,10 +11,11 @@ import hashlib
 from flask import request, g
 from security.crypto import encrypt_aes_gcm
 from fabric.lisp_client import LispClient
+from config import Config
 
 # Chiave simmetrica a 256 bit (32 byte) per AES-256-GCM
 # In produzione viene caricata da config.py / variabili d'ambiente
-AUDIT_AES_KEY = b"12345678901234567890123456789012"
+AUDIT_AES_KEY = Config.AUDIT_AES_KEY
 
 
 def generate_log_id(

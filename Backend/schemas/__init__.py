@@ -4,7 +4,7 @@ Espone il validatore e tutti i contratti JSON Schema del sistema UniChain.
 """
 from schemas.validator import validate_schema
 
-from schemas.user_schemas import (
+from schemas.user_schema import (
     USER_REGISTRATION_SCHEMA,
     USER_ONCHAIN_SCHEMA,
     build_user_key,

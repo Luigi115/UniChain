@@ -10,9 +10,12 @@ import time
 from functools import wraps
 from flask import request, jsonify, g
 import jwt
+from config import Config
+
+
 
 # Configurazioni di default (sovrascrivibili da config.py)
-JWT_SECRET = "unichain_secret_jwt_key_2026_super_secure"
+JWT_SECRET = Config.JWT_SECRET
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRATION_SECONDS = 28800  # 8 ore di validità
 
