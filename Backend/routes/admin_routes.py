@@ -6,6 +6,11 @@ Presidia onboarding, gestione utenze, passaggi, rinunce e proclamazione di laure
 
 from flask import Blueprint, jsonify, request
 import jsonschema
+from flask import Blueprint, request, jsonify
+from security.rbac import require_role
+from schemas.validator import validate_schema
+from schemas.user_schema import STUDENT_ENROLLMENT_SCHEMA
+from services.admin_service import AdminService
 
 from security import require_role
 from schemas import (
@@ -166,3 +171,23 @@ def approve_graduation(matricola: str):
         }), 400
 
     return jsonify({"status": "SUCCESS", "career": result["data"]}), 200
+
+@admin_bp.route("/students/enroll", methods=["POST"])
+@require_role(["SEGRETERIA"])
+def enroll_new_student():
+    """
+    POST /api/v1/admin/students/enroll
+    Immatricolazione formale dello studente e apertura libretto on-chain.
+    """
+    payload = request.get_json() or {}
+    
+    # Validazione formale contro JSON Schema
+    err = validate_schema(payload, STUDENT_ENROLLMENT_SCHEMA)
+    if err:
+        return jsonify({"status": "FAILED", "code": "VALIDATION_ERR", "message": err}), 400
+
+    result = AdminService.enroll_student(payload)
+    if not result.get("success"):
+        return jsonify({"status": "FAILED", "code": result.get("code"), "message": result.get("error")}), 400
+
+    return jsonify({"status": "SUCCESS", "data": result}), 201
