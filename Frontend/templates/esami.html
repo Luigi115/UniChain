@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+
+{% block title %}I Miei Esami{% endblock %}
+
+{% block content %}
+<div style="font-family: 'Segoe UI', sans-serif; padding: 40px; max-width: 1000px; margin: 0 auto;">
+    
+    <div style="margin-bottom: 30px; border-bottom: 2px solid #eee; padding-bottom: 20px; display: flex; justify-content: space-between; align-items: center;">
+        <div style="display: flex; align-items: center; gap: 30px;">
+            
+            <div style="position: relative; width: 100px; height: 100px;">
+                <svg width="100" height="100" viewBox="0 0 100 100">
+                    <circle cx="50" cy="50" r="45" stroke="#eee" stroke-width="8" fill="none" />
+                    <circle id="progress-circle" cx="50" cy="50" r="45" stroke="#0b6b3a" stroke-width="8" fill="none" 
+                            stroke-dasharray="282.7" stroke-dashoffset="282.7" 
+                            stroke-linecap="round" transform="rotate(-90 50 50)" 
+                            style="transition: stroke-dashoffset 1s ease-out;" />
+                </svg>
+                <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center;">
+                    <span id="media-voto" style="font-size: 24px; font-weight: bold; color: #0b6b3a;">0</span>
+                    <div style="font-size: 10px; color: #666; margin-top: -5px;">MEDIA</div>
+                </div>
+            </div>
+
+            <div>
+                <h1 style="color: #0b6b3a; margin: 0;">Libretto Studente</h1>
+                <p style="color: #666; margin: 5px 0 0 0;">Esami sostenuti registrati nella blockchain</p>
+            </div>
+        </div>
+
+        <a href="{{ url_for('home_studente') }}" style="text-decoration: none; color: #0b6b3a; font-weight: bold; border: 1px solid #0b6b3a; padding: 8px 16px; border-radius: 8px;">
+            ← Torna alla Home
+        </a>
+    </div>
+
+    <div style="background: white; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); overflow: hidden; border: 1px solid #eee;">
+        <table style="width: 100%; border-collapse: collapse; text-align: left;">
+            <thead>
+                <tr style="background-color: #0b6b3a; color: white;">
+                    <th style="padding: 15px;">Codice Esame</th>
+                    <th style="padding: 15px;">Insegnamento</th>
+                    <th style="padding: 15px;">Data</th>
+                    <th style="padding: 15px;">Voto</th>
+                    <th style="padding: 15px;">Stato Blockchain</th>
+                </tr>
+            </thead>
+            <tbody id="tabellaEsami">
+                </tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+    // 1. DATI DUMMY IN FORMATO JSON (Struttura Blockchain compatibile)
+    const esamiDummy = [
+        {
+            "class": "ESAME",
+            "key": "INF-01",
+            "val": { "nome_corso": "Programmazione 1", "data_verbalizzazione": "15/02/2026", "voto": "28", "lode": false }
+        },
+        {
+            "class": "ESAME",
+            "key": "MAT-02",
+            "val": { "nome_corso": "Analisi Matematica", "data_verbalizzazione": "10/04/2026", "voto": "30", "lode": true }
+        },
+        {
+            "class": "ESAME",
+            "key": "INF-03",
+            "val": { "nome_corso": "Basi di Dati", "data_verbalizzazione": "18/05/2026", "voto": "25", "lode": false }
+        }
+    ];
+
+    // 2. FUNZIONE PER IL CALCOLO DELLA MEDIA E ANIMAZIONE DEL CERCHIO
+    function aggiornaMedia(dati) {
+        if (dati.length === 0) return;
+
+        // Calcolo della media aritmetica semplice
+        const somma = dati.reduce((acc, esame) => acc + parseInt(esame.val.voto), 0);
+        const media = somma / dati.length;
+        
+        // Stampa il valore testuale arrotondato a due decimali
+        document.getElementById('media-voto').innerText = media.toFixed(2);
+
+        // Calcolo della circonferenza e aggiornamento del bordo dell'SVG (2 * PI * raggio 45 = ~282.7)
+        const cerchio = document.getElementById('progress-circle');
+        const circonferenza = 282.7;
+        const percentuale = media / 30; // Rapporto basato sul voto massimo (30)
+        const offset = circonferenza - (percentuale * circonferenza);
+        
+        // Applica lo scostamento per colorare parzialmente il cerchio
+        cerchio.style.strokeDashoffset = offset;
+    }
+
+    // 3. FUNZIONE PER COSTRUIRE GRAFICAMENTE LE RIGHE DELLA TABELLA
+    function mostraEsami(dati) {
+        const tbody = document.getElementById('tabellaEsami');
+        tbody.innerHTML = ""; // Pulisce la tabella da eventuali residui
+
+        dati.forEach(esame => {
+            const riga = document.createElement('tr');
+            riga.style.borderBottom = "1px solid #eee";
+            
+            // Se c'è la lode scrive "30 e Lode", altrimenti scrive solo il voto numerico
+            const votoFinale = esame.val.lode ? `${esame.val.voto} e Lode` : esame.val.voto;
+
+            riga.innerHTML = `
+                <td style="padding: 15px; font-weight: bold; color: #555;">${esame.key}</td>
+                <td style="padding: 15px;">${esame.val.nome_corso}</td>
+                <td style="padding: 15px; color: #666;">${esame.val.data_verbalizzazione}</td>
+                <td style="padding: 15px; font-weight: bold; color: #0b6b3a;">${votoFinale}</td>
+                <td style="padding: 15px;">
+                    <span style="background: #e6f4ea; color: #137333; padding: 4px 8px; border-radius: 12px; font-size: 12px; font-weight: bold;">
+                        ✓ Validato (Block)
+                    </span>
+                </td>
+            `;
+            tbody.appendChild(riga);
+        });
+    }
+
+    // 4. EVENTI AL CARICAMENTO DELLA PAGINA
+    document.addEventListener('DOMContentLoaded', () => {
+        mostraEsami(esamiDummy);
+        aggiornaMedia(esamiDummy);
+    });
+</script>
+{% endblock %}

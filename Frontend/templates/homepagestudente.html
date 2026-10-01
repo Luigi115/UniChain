@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+
+{% block title %}Unichain - Dashboard{% endblock %}
+
+{% block content %}
+<style>
+    .sidebar {
+        width: 260px;
+        background: #0b6b3a;
+        color: white;
+        padding: 30px 20px;
+    }
+    .sidebar h2 { margin-bottom: 40px; text-align: center; font-size: 24px; }
+    
+    .main { flex: 1; padding: 40px; }
+    .header { margin-bottom: 40px; border-bottom: 2px solid #eee; padding-bottom: 20px; }
+    
+    .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+        gap: 25px;
+    }
+    .card {
+        background: white;
+        padding: 40px 20px;
+        border-radius: 15px;
+        text-align: center;
+        text-decoration: none;
+        color: #333;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+        transition: transform 0.3s, border-color 0.3s;
+        border: 2px solid transparent;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+    }
+    .card:hover {
+        transform: translateY(-5px);
+        border-color: #0b6b3a;
+        box-shadow: 0 8px 20px rgba(0,0,0,0.1);
+    }
+    .icon { font-size: 50px; margin-bottom: 15px; }
+    .card span { font-weight: bold; font-size: 18px; color: #0b6b3a; }
+</style>
+
+<div style="display: flex; min-height: 90vh; font-family: 'Segoe UI', sans-serif; background-color: #f8f9fa;">
+    <div class="sidebar">
+        <h2>Unichain</h2>
+        <div style="opacity: 0.8; font-size: 14px;">Area Studente</div>
+    </div>
+
+    <div class="main">
+        <div class="header">
+            <h1>Benvenuto nel tuo portale</h1>
+            <p>Seleziona l'azione che desideri compiere oggi.</p>
+        </div>
+
+        <div class="grid">
+            <a href="{{ url_for('visualizza_esami') }}" class="card">
+                <div class="icon">📚</div>
+                <span>I miei esami</span>
+            </a>
+
+            <a href="{{ url_for('pagina_prenotazioni') }}" class="card">
+                <div class="icon">✍️</div>
+                <span>Prenota esame</span>
+            </a>
+
+            <a href="#" class="card">
+                <div class="icon">🎓</div>
+                <span>Richiedi laurea</span>
+            </a>
+        </div>
+    </div>
+</div>
+{% endblock %}

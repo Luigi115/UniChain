@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+
+{% block title %}Home{% endblock %}
+ù
+{% block content %}
+
+<!-- TOP BAR VERDE -->
+<div style="background-color:#0b6b3a; width:100%; padding:18px 0;">
+
+    <div class="container d-flex justify-content-between align-items-center">
+
+        <!-- LOGO / TITOLO -->
+        <div class="text-white fw-bold fs-5">
+            UniChain
+        </div>
+
+        <!-- BOTTONI NAV -->
+        <div class="d-flex gap-3">
+
+            <a href="/login" class="top-btn">
+                Login
+            </a>
+
+            <a href="/universita" class="top-btn">
+                La nostra università
+            </a>
+
+        </div>
+
+    </div>
+</div>
+
+<!-- HERO SECTION CON IMMAGINE WATERMARK -->
+<div style="
+    position: relative;
+    height: 90vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: white;
+    overflow: hidden;
+">
+
+    <!-- IMMAGINE SFONDO -->
+    <img src="{{ url_for('static', filename='img/torvergata.png') }}"
+         style="
+            position: absolute;
+            width: 75%;
+            opacity: 0.5;
+            filter: grayscale(40%);
+            z-index: 0;
+         ">
+
+</div>
+
+{% endblock %}

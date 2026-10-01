@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+
+{% block title %}Login{% endblock %}
+
+{% block content %}
+
+<div style="height: 90vh; display: flex; justify-content: center; align-items: center; background: white;">
+    <div style="width: 380px; padding: 40px; border-radius: 16px; border: 1px solid #e5e5e5; box-shadow: 0 10px 25px rgba(0,0,0,0.08);">
+
+        <h3 style="text-align:center; color:#0b6b3a; margin-bottom:30px;">Login</h3>
+
+        <form id="loginForm">
+            <div style="margin-bottom:20px;">
+                <label style="display:block; margin-bottom:8px;">Matricola</label>
+                <input type="text" placeholder="Inserisci matricola" required
+                       style="width:100%; padding:10px; border:1px solid #ccc; border-radius:8px; box-sizing: border-box;">
+            </div>
+
+            <div style="margin-bottom:25px;">
+                <label style="display:block; margin-bottom:8px;">Password</label>
+                <input type="password" placeholder="Inserisci password" required
+                       style="width:100%; padding:10px; border:1px solid #ccc; border-radius:8px; box-sizing: border-box;">
+            </div>
+
+            <button type="submit"
+                    style="width:100%; padding:12px; background:#0b6b3a; color:white; border:none; border-radius:8px; cursor:pointer; font-weight:bold;">
+                Accedi
+            </button>
+        </form>
+    </div>
+</div>
+
+<script>
+    document.getElementById('loginForm').addEventListener('submit', function(event) {
+        event.preventDefault(); 
+        // Diciamo a Flask di cercare la rotta chiamata 'home_studente'
+        window.location.href = "{{ url_for('home_studente') }}";
+    });
+</script>
+
+{% endblock %}

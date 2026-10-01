@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+
+{% block title %}Prenota Esame{% endblock %}
+
+{% block content %}
+<div style="font-family: 'Segoe UI', sans-serif; padding: 40px; max-width: 1000px; margin: 0 auto;">
+    
+    <div style="margin-bottom: 30px; border-bottom: 2px solid #eee; padding-bottom: 20px; display: flex; justify-content: space-between; align-items: center;">
+        <div>
+            <h1 style="color: #0b6b3a; margin: 0;">Appelli Disponibili</h1>
+            <p style="color: #666; margin: 5px 0 0 0;">Seleziona un esame per iscriverti alla sessione</p>
+        </div>
+        <a href="{{ url_for('home_studente') }}" style="text-decoration: none; color: #0b6b3a; font-weight: bold; border: 1px solid #0b6b3a; padding: 8px 16px; border-radius: 8px;">
+            ← Torna alla Dashboard
+        </a>
+    </div>
+
+    <div style="background: white; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); overflow: hidden; border: 1px solid #eee;">
+        <table style="width: 100%; border-collapse: collapse; text-align: left;">
+            <thead>
+                <tr style="background-color: #0b6b3a; color: white;">
+                    <th style="padding: 15px;">Codice Appello</th>
+                    <th style="padding: 15px;">Insegnamento</th>
+                    <th style="padding: 15px;">Data Esame</th>
+                    <th style="padding: 15px;">Docente</th>
+                    <th style="padding: 15px; text-align: center;">Azione</th>
+                </tr>
+            </thead>
+            <tbody id="tabellaAppelli">
+                </tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+    // Lista degli esami finti (dummy) che lo studente può prenotare
+    const appelliDummy = [
+        {
+            "codice": "APP-ROBOT-01",
+            "corso": "Robotica e Sistemi Autonomi",
+            "data": "12/06/2026",
+            "docente": "Prof. Rossi"
+        },
+        {
+            "codice": "APP-SEC-02",
+            "corso": "Cybersecurity e Crittografia",
+            "data": "25/06/2026",
+            "docente": "Prof. Bianchi"
+        }
+    ];
+
+    // Funzione per inserire le righe degli esami nella tabella grafica
+    function renderingAppelli() {
+        const tbody = document.getElementById('tabellaAppelli');
+        tbody.innerHTML = "";
+
+        appelliDummy.forEach(appello => {
+            const riga = document.createElement('tr');
+            riga.style.borderBottom = "1px solid #eee";
+
+            riga.innerHTML = `
+                <td style="padding: 15px; font-weight: bold; color: #555;">${appello.codice}</td>
+                <td style="padding: 15px;">${appello.corso}</td>
+                <td style="padding: 15px; color: #666;">${appello.data}</td>
+                <td style="padding: 15px;">${appello.docente}</td>
+                <td style="padding: 15px; text-align: center;">
+                    <button onclick="inviaPrenotazione('${appello.codice}', '${appello.corso}')" 
+                            style="background: #0b6b3a; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight: bold;">
+                        Prenota
+                    </button>
+                </td>
+            `;
+            tbody.appendChild(riga);
+        });
+    }
+
+    // Questa funzione scatta SOLO quando clicchi sul bottone "Prenota" dello specifico esame
+    function inviaPrenotazione(codice, nomeCorso) {
+        const payloadPrenotazioneDummy = {
+            "cmd": "AddKV",
+            "class": "PRENOTAZIONE",
+            "key": [codice], 
+            "val": {
+                "studente_matricola": "0386587", 
+                "nome_corso": nomeCorso,
+                "data_richiesta": "19/05/2026",
+                "stato": "In Attesa"
+            }
+        };
+
+        // L'alert che avevi nello screenshot compare correttamente qui al momento dell'azione!
+        alert("Simulazione invio Blockchain effettuata!\n\nJSON generato:\n" + JSON.stringify(payloadPrenotazioneDummy, null, 2));
+    }
+
+    document.addEventListener('DOMContentLoaded', renderingAppelli);
+</script>
+{% endblock %}

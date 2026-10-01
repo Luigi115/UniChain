@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+
+{% block title %}La nostra università{% endblock %}
+
+{% block content %}
+
+<!-- TOP BAR VERDE -->
+<div style="background-color:#0b6b3a; width:100%; padding:18px 0;">
+
+    <div class="container d-flex justify-content-between align-items-center">
+
+        <div class="text-white fw-bold fs-5">
+            UniCarriera
+        </div>
+
+        <div class="d-flex gap-3">
+
+            <a href="{{ url_for('home') }}" class="top-btn">
+                Home
+            </a>
+
+            <a href="{{ url_for('login') }}" class="top-btn">
+                Login
+            </a>
+
+        </div>
+
+    </div>
+</div>
+
+<!-- CONTENUTO -->
+<div class="container mt-5">
+
+    <!-- TITOLO -->
+    <h2 class="text-center mb-4" style="color:#0b6b3a;">
+        La nostra università
+    </h2>
+
+    <!-- IMMAGINE -->
+    <div class="text-center mb-4">
+        <img src="{{ url_for('static', filename='img/sogene.jpg') }}"
+             style="width:80%; border-radius:12px; box-shadow:0 6px 20px rgba(0,0,0,0.1);">
+    </div>
+
+    <!-- TESTO -->
+    <div style="max-width:800px; margin:auto; font-size:17px; line-height:1.6; color:#333;">
+
+        <p>
+            La nostra università rappresenta un punto di riferimento per la formazione accademica e la crescita personale degli studenti.
+            Situata in un ambiente dinamico e stimolante, offre numerosi corsi di studio e opportunità di sviluppo.
+        </p>
+
+        <p>
+            Gli studenti hanno accesso a strutture moderne, laboratori attrezzati e un corpo docente altamente qualificato.
+            L’obiettivo principale è quello di preparare professionisti competenti e pronti ad affrontare le sfide del mondo del lavoro.
+        </p>
+
+        <p>
+            Oltre all’ambito accademico, l’università promuove attività culturali, sportive e sociali,
+            contribuendo a creare una comunità viva e partecipativa.
+        </p>
+
+    </div>
+
+</div>
+
+{% endblock %}
