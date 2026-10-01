@@ -1,0 +1,2639 @@
+# ALBERO DIRECTORY BACKEND
+.
+./app.py
+./backend_completo.txt
+./config.py
+./fabric
+./fabric/lisp_client.py
+./fabric/README
+./fabric/__init__.py
+./init_admin.py
+./routes
+./routes/admin_routes.py
+./routes/auth_routes.py
+./routes/docente_routes.py
+./routes/README
+./routes/student_routes.py
+./routes/__init__.py
+./schemas
+./schemas/exam_schema.py
+./schemas/grade_schema.py
+./schemas/README
+./schemas/user_schema.py
+./schemas/validator.py
+./schemas/__init__.py
+./security
+./security/audit_logger.py
+./security/crypto.py
+./security/rbac.py
+./security/README
+./security/__init__.py
+./services
+./services/admin_service.py
+./services/auth_service.py
+./services/exam_service.py
+./services/grade_service.py
+./services/README
+./services/__init__.py
+
+======================================================
+
+======================================================
+FILE: ./app.py
+======================================================
+from flask import Flask
+from config import Config
+from routes import register_routes
+from security import init_audit_middleware
+
+def create_app():
+    """Crea e configura l'istanza principale dell'applicazione Flask (Security Gateway)."""
+    app = Flask(__name__)
+
+    # 1. Carica le variabili d'ambiente in modo sicuro
+    app.config.from_object(Config)
+
+    # 2. Registra tutti gli endpoint REST (Livello 5)
+    register_routes(app)
+
+    # 3. Attiva l'intercettore per il logging crittografico (Livello 4)
+    init_audit_middleware(app)
+
+    return app
+
+
+======================================================
+FILE: ./config.py
+======================================================
+import os
+
+class Config:
+    """Configurazioni centralizzate caricate tramite variabili d'ambiente."""
+
+    # Chiave simmetrica a 256 bit (32 byte) per AES-256-GCM
+    AUDIT_AES_KEY = os.environ.get(
+        "AUDIT_AES_KEY", 
+        "12345678901234567890123456789012"
+    ).encode("utf-8")
+
+    # Chiave segreta per la firma dei token JWT
+    JWT_SECRET = os.environ.get(
+        "JWT_SECRET", 
+        "unichain_secret_jwt_key_2026_super_secure"
+    )
+    
+# Configurazioni di rete per il Client Lisp (Restricted Zone)
+    LISP_HOST = os.environ.get("LISP_HOST", "160.80.216.209")
+    LISP_PORT = int(os.environ.get("LISP_PORT", 9999))
+
+
+======================================================
+FILE: ./fabric/lisp_client.py
+======================================================
+import json
+import socket
+from typing import Any, Dict, Optional
+from config import Config
+
+# Configurazione del "telefono" verso il Client Lisp caricata dinamicamente
+LISP_HOST = Config.LISP_HOST
+LISP_PORT = Config.LISP_PORT
+
+class LispClient:
+    """
+    Adapter di Livello 1 per dialogare con il Client Lisp.
+    Il suo unico scopo è creare la 'busta' (envelope) e spedirla.
+    """
+
+    @staticmethod
+    def _esegui_comando(cmd: str, class_name: str, key: Optional[str] = None, value: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        # 1. Costruiamo l'envelope JSON richiesto dal Client Lisp
+        envelope = {
+            "cmd": cmd,
+            "class": class_name
+        }
+        if key is not None:
+            envelope["key"] = key
+        if value is not None:
+            envelope["value"] = value
+
+        payload = json.dumps(envelope)
+
+        # 2. Apriamo la comunicazione TCP (il socket)
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(5.0)  # Mettiamo un limite di tempo per evitare blocchi
+                s.connect((LISP_HOST, LISP_PORT))
+                s.sendall(payload.encode("utf-8"))
+                
+                # 3. Riceviamo e traduciamo la risposta
+                raw_response = s.recv(8192)
+                if not raw_response:
+                    return {"status": "ERROR", "message": "Nessuna risposta ricevuta dal ledger."}
+                
+                return json.loads(raw_response.decode("utf-8"))
+                
+        except Exception as e:
+            # Se la blockchain è irraggiungibile, gestiamo l'errore in modo pulito
+            return {"status": "ERROR", "message": f"Errore di comunicazione Fabric: {str(e)}"}
+
+    # --- Implementazione delle 4 Primitive Architetturali ---
+
+    @classmethod
+    def add_kv(cls, class_name: str, key: str, value: Dict[str, Any]) -> Dict[str, Any]:
+        """Scrive o sovrascrive un record sul World State."""
+        return cls._esegui_comando("AddKV", class_name, key=key, value=value)
+
+    @classmethod
+    def get_kv(cls, class_name: str, key: str) -> Optional[Dict[str, Any]]:
+        """Recupera lo stato corrente di un record."""
+        res = cls._esegui_comando("GetKV", class_name, key=key)
+        if res.get("status") == "SUCCESS" and "value" in res:
+            return res["value"]
+        return None
+
+    @classmethod
+    def get_key_history(cls, class_name: str, key: str) -> Dict[str, Any]:
+        """Estrae la catena storica immutabile delle transazioni di una chiave."""
+        return cls._esegui_comando("GetKeyHistory", class_name, key=key)
+
+    @classmethod
+    def del_kv(cls, class_name: str, key: str) -> Dict[str, Any]:
+        """Applica una cancellazione logica (tombstone) sul record."""
+        return cls._esegui_comando("DelKV", class_name, key=key)
+    '''
+    # --- BLOCCO DI TEST ---
+if __name__ == "__main__":
+    print(f"Tentativo di connessione al Client Lisp su {LISP_HOST}:{LISP_PORT}...")
+    
+    # Invia un comando innocuo: prova a leggere una chiave che (probabilmente) non esiste
+    risposta = LispClient.get_kv(class_name="TestConn", key="ping_123")
+    
+    print("\nRisposta ricevuta:")
+    print(json.dumps(risposta, indent=2))
+    '''
+
+
+======================================================
+FILE: ./fabric/README
+======================================================
+#Questo modulo agisce come driver a basso livello. È l'unico strato del backend autorizzato a dialogare con il perimetro della Restricted Zone. Si occupa di serializzare i comandi verso il Client Lisp, inoltrarli via rete e interpretare le risposte grezze della blockchain.
+#lisp_client.py) è l'unico componente del nostro backend autorizzato a comunicare con la Restricted Zone, l'area blindata dove risiede la blockchain
+#
+#
+#
+
+
+
+======================================================
+FILE: ./fabric/__init__.py
+======================================================
+from .lisp_client import LispClient
+__all__ = ["LispClient"]
+
+
+======================================================
+FILE: ./init_admin.py
+======================================================
+import time
+import bcrypt
+import json
+from fabric.lisp_client import LispClient
+
+def bootstrap():
+    print("=" * 60)
+    print("⏳ TENTATIVO DI SCRITTURA SULLA BLOCKCHAIN (AddKV)...")
+    print("=" * 60)
+
+    # 1. Calcolo hash bcrypt per la password della Segreteria
+    password_in_chiaro = "AdminSegreta2026!"
+    salt = bcrypt.gensalt()
+    pwd_hash = bcrypt.hashpw(password_in_chiaro.encode("utf-8"), salt).decode("utf-8")
+
+    now = int(time.time())
+
+    # 2. Struttura del record utente Segreteria
+    admin_payload = {
+        "matricola": "0000001",
+        "roles": ["SEGRETERIA"],
+        "name": "Responsabile",
+        "surname": "Segreteria",
+        "email": "segreteria@unichain.it",
+        "password_hash": pwd_hash,
+        "status": "ACTIVE",
+        "created_at": now,
+        "updated_at": now
+    }
+
+    # 3. Invio AddKV alla blockchain tramite LispClient
+    try:
+        print("-> Invio comando AddKV per user:0000001...")
+        risposta_scrittura = LispClient.add_kv("Users", "user:0000001", admin_payload)
+        print("-> Risposta grezza dal server:", json.dumps(risposta_scrittura, indent=2))
+
+        # 4. Verifica immediata con GetKV
+        print("\n-> Eseguo GetKV per verificare la persistenza...")
+        utente_letto = LispClient.get_kv("Users", "user:0000001")
+        print("-> Dato recuperato:", json.dumps(utente_letto, indent=2))
+
+        if utente_letto and utente_letto.get("matricola") == "0000001":
+            print("\n🎉 SUCCESSO! L'utente Segreteria esiste sulla blockchain!")
+            print("Credenziali attive:")
+            print("  Matricola: 0000001")
+            print("  Password:  AdminSegreta2026!")
+        else:
+            print("\n❌ Errore: il record non è stato trovato o è vuoto.")
+
+    except Exception as e:
+        print(f"\n❌ ERRORE DI CONNESSIONE: {e}")
+
+if __name__ == "__main__":
+    bootstrap()
+
+
+======================================================
+FILE: ./routes/admin_routes.py
+======================================================
+"""
+routes/admin_routes.py
+Livello 5: RESTful API Controller per la Segreteria Studenti.
+Presidia onboarding, gestione utenze, passaggi, rinunce e proclamazione di laurea (U6).
+"""
+
+from flask import Blueprint, jsonify, request
+import jsonschema
+from flask import Blueprint, request, jsonify
+from security.rbac import require_role
+from schemas.validator import validate_schema
+from schemas.user_schema import STUDENT_ENROLLMENT_SCHEMA
+from services.admin_service import AdminService
+
+from security import require_role
+from schemas import (
+    validate_schema,
+    USER_REGISTRATION_SCHEMA,
+    CAREER_GRADUATE_SCHEMA,
+    build_user_key,
+)
+from services import AuthService, AdminService
+from fabric.lisp_client import LispClient
+
+admin_bp = Blueprint("admin_bp", __name__, url_prefix="/api/v1")
+
+
+@admin_bp.route("/users/register", methods=["POST"])
+@require_role(["SEGRETERIA"])
+def register_user():
+    """
+    POST /api/v1/users/register
+    Registra una nuova utenza e ne calcola l'hash bcrypt on-chain.
+    """
+    data = request.get_json() or {}
+
+    try:
+        validate_schema(data, USER_REGISTRATION_SCHEMA)
+    except jsonschema.exceptions.ValidationError as e:
+        return jsonify({"status": "FAILED", "code": "VALIDATION_ERR", "message": e.message}), 400
+
+    result = AuthService.register_user(
+        matricola=data["matricola"],
+        name=data["name"],
+        surname=data["surname"],
+        email=data["email"],
+        plain_password=data["password"],
+        role=data["role"]
+    )
+
+    if not result.get("success"):
+        return jsonify({
+            "status": "FAILED",
+            "code": result.get("code"),
+            "message": result.get("error")
+        }), 400
+
+    return jsonify({"status": "SUCCESS", "user": result["data"]}), 201
+
+
+@admin_bp.route("/users/<matricola>", methods=["GET"])
+@require_role(["SEGRETERIA"])
+def get_user_profile(matricola: str):
+    """
+    GET /api/v1/users/<matricola>
+    Recupera l'anagrafica utente omettendo l'hash della password.
+    """
+    user_key = build_user_key(matricola)
+    res = LispClient.get_kv("Users", user_key)
+    user = res.get("value") if isinstance(res, dict) else res
+
+    if not user:
+        return jsonify({"status": "FAILED", "code": "NOT_FOUND", "message": "Utente non trovato"}), 404
+
+    safe_user = dict(user)
+    safe_user.pop("password_hash", None)
+
+    return jsonify({"status": "SUCCESS", "user": safe_user}), 200
+
+
+@admin_bp.route("/users/<matricola>/status", methods=["PUT"])
+@require_role(["SEGRETERIA"])
+def update_user_status(matricola: str):
+    """
+    PUT /api/v1/users/<matricola>/status
+    Aggiorna lo stato amministrativo dell'account (ACTIVE | SUSPENDED).
+    """
+    data = request.get_json() or {}
+    new_status = data.get("status")
+
+    if new_status not in ["ACTIVE", "SUSPENDED"]:
+        return jsonify({
+            "status": "FAILED",
+            "code": "INVALID_STATUS",
+            "message": "Stato non valido: ammessi solo ACTIVE o SUSPENDED"
+        }), 400
+
+    result = AdminService.update_user_status(matricola, new_status)
+    if not result.get("success"):
+        return jsonify({"status": "FAILED", "code": result.get("code"), "message": result.get("error")}), 400
+
+    return jsonify({"status": "SUCCESS", "user": result["data"]}), 200
+
+
+@admin_bp.route("/career/<matricola>/transfer", methods=["POST"])
+@require_role(["SEGRETERIA"])
+def approve_transfer(matricola: str):
+    """
+    POST /api/v1/career/<matricola>/transfer
+    Convalida il passaggio di corso verso un nuovo ordinamento didattico.
+    """
+    data = request.get_json() or {}
+    new_degree_id = data.get("new_degree_id")
+
+    if not new_degree_id:
+        return jsonify({"status": "FAILED", "code": "MISSING_FIELD", "message": "new_degree_id obbligatorio"}), 400
+
+    result = AdminService.approve_course_transfer(
+        matricola=matricola,
+        new_degree_id=new_degree_id,
+        notes=data.get("notes")
+    )
+    if not result.get("success"):
+        return jsonify({"status": "FAILED", "code": result.get("code"), "message": result.get("error")}), 400
+
+    return jsonify({"status": "SUCCESS", "career": result["data"]}), 200
+
+
+@admin_bp.route("/career/<matricola>/withdraw", methods=["POST"])
+@require_role(["SEGRETERIA"])
+def approve_withdrawal(matricola: str):
+    """
+    POST /api/v1/career/<matricola>/withdraw
+    Formalizza la rinuncia agli studi e sospende contestualmente l'utenza.
+    """
+    data = request.get_json() or {}
+    reason = data.get("reason", "Rinuncia formale agli studi")
+
+    result = AdminService.approve_withdrawal(matricola, reason=reason)
+    if not result.get("success"):
+        return jsonify({"status": "FAILED", "code": result.get("code"), "message": result.get("error")}), 400
+
+    return jsonify({"status": "SUCCESS", "career": result["data"]}), 200
+
+
+@admin_bp.route("/career/<matricola>/graduate", methods=["POST"])
+@require_role(["SEGRETERIA"])
+def approve_graduation(matricola: str):
+    """
+    POST /api/v1/career/<matricola>/graduate
+    Verifica i requisiti didattici (CFU totali) e proclama la laurea (Anomalia U6 in caso di blocco).
+    """
+    data = request.get_json() or {}
+
+    try:
+        validate_schema(data, CAREER_GRADUATE_SCHEMA)
+    except jsonschema.exceptions.ValidationError as e:
+        return jsonify({"status": "FAILED", "code": "VALIDATION_ERR", "message": e.message}), 400
+
+    result = AdminService.approve_graduation(
+        matricola=matricola,
+        final_grade=data["final_grade"],
+        has_honors=data.get("has_honors", False)
+    )
+
+    if not result.get("success"):
+        return jsonify({
+            "status": "FAILED",
+            "code": result.get("code"),
+            "message": result.get("error")
+        }), 400
+
+    return jsonify({"status": "SUCCESS", "career": result["data"]}), 200
+
+@admin_bp.route("/students/enroll", methods=["POST"])
+@require_role(["SEGRETERIA"])
+def enroll_new_student():
+    """
+    POST /api/v1/admin/students/enroll
+    Immatricolazione formale dello studente e apertura libretto on-chain.
+    """
+    payload = request.get_json() or {}
+    
+    # Validazione formale contro JSON Schema
+    err = validate_schema(payload, STUDENT_ENROLLMENT_SCHEMA)
+    if err:
+        return jsonify({"status": "FAILED", "code": "VALIDATION_ERR", "message": err}), 400
+
+    result = AdminService.enroll_student(payload)
+    if not result.get("success"):
+        return jsonify({"status": "FAILED", "code": result.get("code"), "message": result.get("error")}), 400
+
+    return jsonify({"status": "SUCCESS", "data": result}), 201
+
+
+======================================================
+FILE: ./routes/auth_routes.py
+======================================================
+"""
+routes/auth_routes.py
+Livello 5: RESTful API Controller per Autenticazione e Profilo Utente.
+"""
+
+from flask import Blueprint, jsonify, request, g
+from security import require_role
+from services import AuthService
+
+auth_bp = Blueprint("auth_bp", __name__, url_prefix="/api/v1/auth")
+
+
+@auth_bp.route("/login", methods=["POST"])
+def login():
+    """
+    POST /api/v1/auth/login
+    Autentica l'utente confrontando l'hash bcrypt on-chain ed emette il JWT.
+    """
+    data = request.get_json() or {}
+    matricola = data.get("matricola")
+    password = data.get("password")
+
+    if not matricola or not password:
+        return jsonify({
+            "status": "FAILED",
+            "code": "MISSING_FIELDS",
+            "message": "Matricola e password sono obbligatorie"
+        }), 400
+
+    result = AuthService.authenticate_user(matricola, password)
+
+    if not result.get("success"):
+        status_code = 403 if result.get("code") == "ACCOUNT_SUSPENDED" else 401
+        return jsonify({
+            "status": "FAILED",
+            "code": result.get("code"),
+            "message": result.get("error")
+        }), status_code
+
+    return jsonify({
+        "status": "SUCCESS",
+        "access_token": result["access_token"],
+        "token_type": result["token_type"],
+        "user": result["user"]
+    }), 200
+
+
+@auth_bp.route("/profile", methods=["GET"])
+@require_role(["SEGRETERIA", "DOCENTE", "STUDENTE"])
+def get_profile():
+    """
+    GET /api/v1/auth/profile
+    Restituisce i dati del profilo estratto dal token JWT convalidato.
+    """
+    current_user = getattr(g, "current_user", {})
+    return jsonify({
+        "status": "SUCCESS",
+        "user": current_user
+    }), 200
+
+
+======================================================
+FILE: ./routes/docente_routes.py
+======================================================
+"""
+routes/docente_routes.py
+Livello 5: RESTful API Controller per il Docente.
+Presidia creazione appelli, lista prenotati e verbalizzazione voti on-chain.
+"""
+
+from flask import Blueprint, jsonify, request, g
+import jsonschema
+
+from security import require_role
+from schemas import (
+    validate_schema,
+    EXAM_SESSION_CREATE_SCHEMA,
+    GRADE_RECORD_CREATE_SCHEMA,
+)
+from services import ExamService, GradeService
+from fabric.lisp_client import LispClient
+
+docente_bp = Blueprint("docente_bp", __name__, url_prefix="/api/v1")
+
+
+@docente_bp.route("/exams/sessions", methods=["POST"])
+@require_role(["DOCENTE"])
+def create_exam_session():
+    """
+    POST /api/v1/exams/sessions
+    Crea una nuova sessione d'esame nel World State.
+    """
+    data = request.get_json() or {}
+
+    try:
+        validate_schema(data, EXAM_SESSION_CREATE_SCHEMA)
+    except jsonschema.exceptions.ValidationError as e:
+        return jsonify({"status": "FAILED", "code": "VALIDATION_ERR", "message": e.message}), 400
+
+    docente_matr = g.current_user["matricola"]
+    result = ExamService.create_exam_session(
+        docente_matricola=docente_matr,
+        course_id=data["course_id"],
+        exam_date=data["exam_date"],
+        reg_start_date=data["reg_start_date"],
+        reg_end_date=data["reg_end_date"],
+        session_type=data["session_type"],
+        max_seats=data.get("max_seats")
+    )
+
+    if not result.get("success"):
+        return jsonify({
+            "status": "FAILED",
+            "code": result.get("code"),
+            "message": result.get("error")
+        }), 400
+
+    return jsonify({"status": "SUCCESS", "session": result["data"]}), 201
+
+
+@docente_bp.route("/exams/sessions/<session_id>/candidates", methods=["GET"])
+@require_role(["DOCENTE"])
+def get_exam_candidates(session_id: str):
+    """
+    GET /api/v1/exams/sessions/<session_id>/candidates
+    Recupera l'elenco degli studenti iscritti con prenotazione confermata.
+    """
+    res = LispClient.execute("GetKeys", "Prenotazioni")
+    keys = res.get("keys", []) if isinstance(res, dict) else []
+
+    prefix = f"prenotazione:{session_id}:"
+    candidates = []
+
+    for key in keys:
+        if key.startswith(prefix):
+            booking_res = LispClient.get_kv("Prenotazioni", key)
+            if booking_res and booking_res.get("status") == "CONFIRMED":
+                candidates.append(booking_res)
+
+    return jsonify({"status": "SUCCESS", "session_id": session_id, "candidates": candidates}), 200
+
+
+@docente_bp.route("/exams/sessions/<session_id>/grades", methods=["POST"])
+@require_role(["DOCENTE"])
+def record_student_grade(session_id: str):
+    """
+    POST /api/v1/exams/sessions/<session_id>/grades
+    Verbalizza la valutazione didattica. Intercetta Anomalia U3 e Anomalia U4.
+    """
+    data = request.get_json() or {}
+
+    try:
+        validate_schema(data, GRADE_RECORD_CREATE_SCHEMA)
+    except jsonschema.exceptions.ValidationError as e:
+        return jsonify({"status": "FAILED", "code": "VALIDATION_ERR", "message": e.message}), 400
+
+    docente_matr = g.current_user["matricola"]
+    result = GradeService.record_student_grade(
+        session_id=session_id,
+        student_matricola=data["student_matricola"],
+        docente_matricola=docente_matr,
+        grade=data.get("grade"),
+        has_honors=data.get("has_honors", False),
+        outcome_status=data["outcome_status"]
+    )
+
+    if not result.get("success"):
+        status_code = 403 if result.get("code") == "U3" else 400
+        return jsonify({
+            "status": "FAILED",
+            "code": result.get("code"),
+            "message": result.get("error")
+        }), status_code
+
+    return jsonify({"status": "SUCCESS", "grade": result["data"]}), 201
+
+
+@docente_bp.route("/exams/sessions/<session_id>/close", methods=["POST"])
+@require_role(["DOCENTE"])
+def close_exam_session(session_id: str):
+    """
+    POST /api/v1/exams/sessions/<session_id>/close
+    Chiude e sigilla una sessione d'esame.
+    """
+    docente_matr = g.current_user["matricola"]
+    result = ExamService.close_exam_session(session_id, docente_matr)
+
+    if not result.get("success"):
+        status_code = 403 if result.get("code") == "U3" else 400
+        return jsonify({
+            "status": "FAILED",
+            "code": result.get("code"),
+            "message": result.get("error")
+        }), status_code
+
+    return jsonify({"status": "SUCCESS", "session": result["data"]}), 200
+
+
+@docente_bp.route("/exams/grades/history/<session_id>/<student_matricola>", methods=["GET"])
+@require_role(["DOCENTE", "SEGRETERIA"])
+def get_grade_history(session_id: str, student_matricola: str):
+    """
+    GET /api/v1/exams/grades/history/<session_id>/<student_matricola>
+    Estrae l'audit trail inalterabile dello storico voti tramite GetKeyHistory.
+    """
+    result = GradeService.get_grade_history(session_id, student_matricola)
+    return jsonify({"status": "SUCCESS", "history": result.get("history", [])}), 200
+
+
+======================================================
+FILE: ./routes/README
+======================================================
+#Il suo scopo principale è garantire l'integrità del database chiave-valore di Fabric e neutralizzare tempestivamente attacchi di Lisp Command Injection bloccando payload contenenti caratteri o campi malevoli.
+
+
+======================================================
+FILE: ./routes/student_routes.py
+======================================================
+"""
+routes/student_routes.py
+Livello 5: RESTful API Controller per lo Studente.
+Presidia prenotazioni, consultazione appelli e visualizzazione libretto on-chain.
+"""
+
+import time
+from flask import Blueprint, jsonify, request, g
+import jsonschema
+
+from security import require_role
+from schemas import (
+    validate_schema,
+    EXAM_BOOKING_CREATE_SCHEMA,
+    CAREER_TRANSFER_REQUEST_SCHEMA,
+    CAREER_WITHDRAWAL_REQUEST_SCHEMA,
+)
+from services import ExamService, GradeService, AdminService
+from fabric.lisp_client import LispClient
+
+student_bp = Blueprint("student_bp", __name__, url_prefix="/api/v1")
+
+
+@student_bp.route("/exams/sessions/available", methods=["GET"])
+@require_role(["STUDENTE"])
+def get_available_exam_sessions():
+    """
+    GET /api/v1/exams/sessions/available
+    Restituisce l'elenco degli appelli aperti con finestra di registrazione attiva.
+    """
+    now = int(time.time())
+    res = LispClient.execute("GetKeys", "Appelli")
+    keys = res.get("keys", []) if isinstance(res, dict) else []
+
+    available = []
+    for key in keys:
+        session = LispClient.get_kv("Appelli", key)
+        if session and session.get("status") == "OPEN":
+            if session.get("reg_start_date", 0) <= now <= session.get("reg_end_date", 0):
+                available.append(session)
+
+    return jsonify({"status": "SUCCESS", "sessions": available}), 200
+
+
+@student_bp.route("/exams/bookings", methods=["POST"])
+@require_role(["STUDENTE"])
+def book_exam():
+    """
+    POST /api/v1/exams/bookings
+    Invia la prenotazione a un esame. Esegue verifiche formali e propedeuticità (U2).
+    """
+    data = request.get_json() or {}
+
+    try:
+        validate_schema(data, EXAM_BOOKING_CREATE_SCHEMA)
+    except jsonschema.exceptions.ValidationError as e:
+        return jsonify({"status": "FAILED", "code": "VALIDATION_ERR", "message": e.message}), 400
+
+    student_matr = g.current_user["matricola"]
+    result = ExamService.book_exam_session(
+        session_id=data["session_id"],
+        student_matricola=student_matr,
+        notes=data.get("notes")
+    )
+
+    if not result.get("success"):
+        return jsonify({
+            "status": "FAILED",
+            "code": result.get("code"),
+            "message": result.get("error")
+        }), 400
+
+    return jsonify({"status": "SUCCESS", "booking": result["data"]}), 201
+
+
+@student_bp.route("/exams/bookings/<session_id>", methods=["DELETE"])
+@require_role(["STUDENTE"])
+def cancel_booking(session_id: str):
+    """
+    DELETE /api/v1/exams/bookings/<session_id>
+    Revoca una prenotazione prima della scadenza della finestra didattica.
+    """
+    student_matr = g.current_user["matricola"]
+    result = ExamService.cancel_booking(session_id, student_matr)
+
+    if not result.get("success"):
+        return jsonify({
+            "status": "FAILED",
+            "code": result.get("code"),
+            "message": result.get("error")
+        }), 400
+
+    return jsonify({"status": "SUCCESS", "data": result["data"]}), 200
+
+
+@student_bp.route("/career/transcript", methods=["GET"])
+@require_role(["STUDENTE"])
+def get_transcript():
+    """
+    GET /api/v1/career/transcript
+    Restituisce in sola lettura il libretto accademico dello studente.
+    """
+    student_matr = g.current_user["matricola"]
+    result = GradeService.get_student_transcript(student_matr)
+
+    if not result.get("success"):
+        return jsonify({
+            "status": "FAILED",
+            "code": result.get("code"),
+            "message": result.get("error")
+        }), 404
+
+    return jsonify({"status": "SUCCESS", "transcript": result["transcript"]}), 200
+
+
+@student_bp.route("/career/requests/transfer", methods=["POST"])
+@require_role(["STUDENTE"])
+def request_transfer():
+    """
+    POST /api/v1/career/requests/transfer
+    Inoltra formale richiesta di passaggio di corso.
+    """
+    data = request.get_json() or {}
+    try:
+        validate_schema(data, CAREER_TRANSFER_REQUEST_SCHEMA)
+    except jsonschema.exceptions.ValidationError as e:
+        return jsonify({"status": "FAILED", "code": "VALIDATION_ERR", "message": e.message}), 400
+
+    student_matr = g.current_user["matricola"]
+    result = AdminService.approve_course_transfer(
+        matricola=student_matr,
+        new_degree_id=data["target_degree_id"],
+        notes=data.get("motivation")
+    )
+
+    if not result.get("success"):
+        return jsonify({"status": "FAILED", "code": result.get("code"), "message": result.get("error")}), 400
+
+    return jsonify({"status": "SUCCESS", "career": result["data"]}), 200
+
+
+@student_bp.route("/career/requests/withdrawal", methods=["POST"])
+@require_role(["STUDENTE"])
+def request_withdrawal():
+    """
+    POST /api/v1/career/requests/withdrawal
+    Inoltra formale rinuncia agli studi.
+    """
+    data = request.get_json() or {}
+    try:
+        validate_schema(data, CAREER_WITHDRAWAL_REQUEST_SCHEMA)
+    except jsonschema.exceptions.ValidationError as e:
+        return jsonify({"status": "FAILED", "code": "VALIDATION_ERR", "message": e.message}), 400
+
+    student_matr = g.current_user["matricola"]
+    result = AdminService.approve_withdrawal(student_matr, reason=data["reason"])
+
+    if not result.get("success"):
+        return jsonify({"status": "FAILED", "code": result.get("code"), "message": result.get("error")}), 400
+
+    return jsonify({"status": "SUCCESS", "career": result["data"]}), 200
+
+
+======================================================
+FILE: ./routes/__init__.py
+======================================================
+"""
+routes package
+Livello 5: RESTful API Controllers & Routing Layer per UniChain.
+Registra centralmente tutti i Blueprint dell'applicazione Flask.
+"""
+
+from flask import Flask
+from routes.auth_routes import auth_bp
+from routes.student_routes import student_bp
+from routes.docente_routes import docente_bp
+from routes.admin_routes import admin_bp
+
+
+def register_routes(app: Flask) -> None:
+    """Registra tutti i Blueprint dei controller nel server Flask."""
+    app.register_blueprint(auth_bp)
+    app.register_blueprint(student_bp)
+    app.register_blueprint(docente_bp)
+    app.register_blueprint(admin_bp)
+
+
+__all__ = [
+    "auth_bp",
+    "student_bp",
+    "docente_bp",
+    "admin_bp",
+    "register_routes",
+]
+
+
+======================================================
+FILE: ./schemas/exam_schema.py
+======================================================
+"""
+schemas/exam_schema.py
+Definizione dei contratti JSON Schema e helper di namespacing 
+per le classi Appelli e Prenotazioni.
+"""
+
+# ==============================================================================
+# 1. SCHEMI CLASSE APPELLI
+# ==============================================================================
+
+# Payload HTTP inviato dal Docente per creare una sessione d'esame
+EXAM_SESSION_CREATE_SCHEMA = {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "ExamSessionCreatePayload",
+    "type": "object",
+    "properties": {
+        "course_id": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 20
+        },
+        "exam_date": {
+            "type": "integer",
+            "minimum": 0
+        },
+        "reg_start_date": {
+            "type": "integer",
+            "minimum": 0
+        },
+        "reg_end_date": {
+            "type": "integer",
+            "minimum": 0
+        },
+        "session_type": {
+            "type": "string",
+            "enum": ["ORDINARIO", "STRAORDINARIO"]
+        },
+        "max_seats": {
+            "type": ["integer", "null"],
+            "minimum": 1
+        }
+    },
+    "required": [
+        "course_id",
+        "exam_date",
+        "reg_start_date",
+        "reg_end_date",
+        "session_type"
+    ],
+    "additionalProperties": False
+}
+
+# Record persistito on-chain nel World State (classe Appelli)
+EXAM_SESSION_ONCHAIN_SCHEMA = {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "ExamSessionOnChainRecord",
+    "type": "object",
+    "properties": {
+        "session_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+        },
+        "course_id": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 20
+        },
+        "docente_matricola": {
+            "type": "string",
+            "pattern": r"^[0-9]{7}$"
+        },
+        "exam_date": {
+            "type": "integer",
+            "minimum": 0
+        },
+        "reg_start_date": {
+            "type": "integer",
+            "minimum": 0
+        },
+        "reg_end_date": {
+            "type": "integer",
+            "minimum": 0
+        },
+        "session_type": {
+            "type": "string",
+            "enum": ["ORDINARIO", "STRAORDINARIO"]
+        },
+        "max_seats": {
+            "type": ["integer", "null"],
+            "minimum": 1
+        },
+        "status": {
+            "type": "string",
+            "enum": ["OPEN", "CLOSED", "RECORDED", "CANCELLED"]
+        },
+        "created_at": {
+            "type": "integer",
+            "minimum": 0
+        }
+    },
+    "required": [
+        "session_id",
+        "course_id",
+        "docente_matricola",
+        "exam_date",
+        "reg_start_date",
+        "reg_end_date",
+        "session_type",
+        "status",
+        "created_at"
+    ],
+    "additionalProperties": False
+}
+
+
+# ==============================================================================
+# 2. SCHEMI CLASSE PRENOTAZIONI
+# ==============================================================================
+
+# Payload HTTP inviato dallo Studente per prenotarsi all'appello
+EXAM_BOOKING_CREATE_SCHEMA = {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "ExamBookingCreatePayload",
+    "type": "object",
+    "properties": {
+        "session_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+        },
+        "notes": {
+            "type": ["string", "null"],
+            "maxLength": 255
+        }
+    },
+    "required": ["session_id"],
+    "additionalProperties": False
+}
+
+# Record persistito on-chain nel World State (classe Prenotazioni)
+EXAM_BOOKING_ONCHAIN_SCHEMA = {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "ExamBookingOnChainRecord",
+    "type": "object",
+    "properties": {
+        "session_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+        },
+        "student_matricola": {
+            "type": "string",
+            "pattern": r"^[0-9]{7}$"
+        },
+        "booking_date": {
+            "type": "integer",
+            "minimum": 0
+        },
+        "status": {
+            "type": "string",
+            "enum": ["CONFIRMED", "CANCELLED"]
+        },
+        "notes": {
+            "type": ["string", "null"],
+            "maxLength": 255
+        }
+    },
+    "required": [
+        "session_id",
+        "student_matricola",
+        "booking_date",
+        "status"
+    ],
+    "additionalProperties": False
+}
+
+
+# ==============================================================================
+# 3. HELPER NAMESPACING (CHIAVI ON-CHAIN)
+# ==============================================================================
+
+def build_exam_key(session_id: str) -> str:
+    """Costruisce la chiave univoca per la sessione d'esame."""
+    return f"appello:{session_id}"
+
+def build_booking_key(session_id: str, student_matricola: str) -> str:
+    """Costruisce la chiave univoca composta per la prenotazione."""
+    return f"prenotazione:{session_id}:{student_matricola}"
+
+
+======================================================
+FILE: ./schemas/grade_schema.py
+======================================================
+"""
+schemas/grade_schema.py
+Definizione dei contratti JSON Schema e helper di namespacing 
+per le classi Voti e Careers.
+"""
+
+# ==============================================================================
+# 1. SCHEMI CLASSE VOTI (VERBALIZZAZIONE DOCENTE)
+# ==============================================================================
+
+# Payload HTTP inviato dal Docente per registrare un esito d'esame
+GRADE_RECORD_CREATE_SCHEMA = {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "GradeRecordCreatePayload",
+    "type": "object",
+    "properties": {
+        "student_matricola": {
+            "type": "string",
+            "pattern": r"^[0-9]{7}$"
+        },
+        "grade": {
+            "type": ["integer", "null"],
+            "minimum": 18,
+            "maximum": 30
+        },
+        "has_honors": {
+            "type": "boolean"
+        },
+        "outcome_status": {
+            "type": "string",
+            "enum": ["PASSED", "REJECTED", "WITHDRAWN", "ABSENT"]
+        }
+    },
+    "required": [
+        "student_matricola",
+        "grade",
+        "has_honors",
+        "outcome_status"
+    ],
+    "additionalProperties": False
+}
+
+# Record persistito on-chain nel World State (classe Voti)
+GRADE_ONCHAIN_SCHEMA = {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "GradeOnChainRecord",
+    "type": "object",
+    "properties": {
+        "session_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+        },
+        "student_matricola": {
+            "type": "string",
+            "pattern": r"^[0-9]{7}$"
+        },
+        "docente_matricola": {
+            "type": "string",
+            "pattern": r"^[0-9]{7}$"
+        },
+        "grade": {
+            "type": ["integer", "null"],
+            "minimum": 18,
+            "maximum": 30
+        },
+        "has_honors": {
+            "type": "boolean"
+        },
+        "outcome_status": {
+            "type": "string",
+            "enum": ["PASSED", "REJECTED", "WITHDRAWN", "ABSENT"]
+        },
+        "signed_at": {
+            "type": "integer",
+            "minimum": 0
+        }
+    },
+    "required": [
+        "session_id",
+        "student_matricola",
+        "docente_matricola",
+        "grade",
+        "has_honors",
+        "outcome_status",
+        "signed_at"
+    ],
+    "additionalProperties": False
+}
+
+
+# ==============================================================================
+# 2. SCHEMI CLASSE CAREERS (GESTIONE CARRIERA E STATI)
+# ==============================================================================
+
+# Payload HTTP inviato dallo Studente per richiesta passaggio di corso
+CAREER_TRANSFER_REQUEST_SCHEMA = {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "CareerTransferRequestPayload",
+    "type": "object",
+    "properties": {
+        "target_degree_id": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 20
+        },
+        "motivation": {
+            "type": "string",
+            "minLength": 5,
+            "maxLength": 500
+        }
+    },
+    "required": ["target_degree_id", "motivation"],
+    "additionalProperties": False
+}
+
+# Payload HTTP inviato dallo Studente per istanza di rinuncia agli studi
+CAREER_WITHDRAWAL_REQUEST_SCHEMA = {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "CareerWithdrawalRequestPayload",
+    "type": "object",
+    "properties": {
+        "reason": {
+            "type": "string",
+            "minLength": 5,
+            "maxLength": 500
+        }
+    },
+    "required": ["reason"],
+    "additionalProperties": False
+}
+
+# Payload HTTP per l'approvazione e proclamazione di Laurea
+CAREER_GRADUATE_SCHEMA = {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "CareerGraduatePayload",
+    "type": "object",
+    "properties": {
+        "final_grade": {
+            "type": "integer",
+            "minimum": 66,
+            "maximum": 110
+        },
+        "has_honors": {
+            "type": "boolean"
+        }
+    },
+    "required": ["final_grade", "has_honors"],
+    "additionalProperties": False
+}
+
+# Struttura del singolo esame verbalizzato all'interno della carriera
+PASSED_EXAM_SUB_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "course_id": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 20
+        },
+        "grade": {
+            "type": "integer",
+            "minimum": 18,
+            "maximum": 30
+        },
+        "has_honors": {
+            "type": "boolean"
+        },
+        "recorded_at": {
+            "type": "integer",
+            "minimum": 0
+        }
+    },
+    "required": ["course_id", "grade", "has_honors", "recorded_at"],
+    "additionalProperties": False
+}
+
+# Record persistito on-chain nel World State (classe Careers)
+CAREER_ONCHAIN_SCHEMA = {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "CareerOnChainRecord",
+    "type": "object",
+    "properties": {
+        "student_matricola": {
+            "type": "string",
+            "pattern": r"^[0-9]{7}$"
+        },
+        "degree_id": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 20
+        },
+        "cfu_total": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 180
+        },
+        "status": {
+            "type": "string",
+            "enum": ["ENROLLED", "TRANSFER_PENDING", "WITHDRAWN", "GRADUATED"]
+        },
+        "passed_exams": {
+            "type": "array",
+            "items": PASSED_EXAM_SUB_SCHEMA
+        },
+        "graduation_request_date": {
+            "type": ["integer", "null"],
+            "minimum": 0
+        },
+        "last_updated": {
+            "type": "integer",
+            "minimum": 0
+        }
+    },
+    "required": [
+        "student_matricola",
+        "degree_id",
+        "cfu_total",
+        "status",
+        "passed_exams",
+        "graduation_request_date",
+        "last_updated"
+    ],
+    "additionalProperties": False
+}
+
+
+# ==============================================================================
+# 3. HELPER NAMESPACING (CHIAVI ON-CHAIN)
+# ==============================================================================
+
+def build_grade_key(session_id: str, student_matricola: str) -> str:
+    """Costruisce la chiave logica del voto verbalizzato."""
+    return f"voto:{session_id}:{student_matricola}"
+
+def build_career_key(student_matricola: str) -> str:
+    """Costruisce la chiave logica della carriera accademica dello studente."""
+    return f"career:{student_matricola}"
+
+
+======================================================
+FILE: ./schemas/README
+======================================================
+Il Livello 2 (schemas/) funge da "dogana strutturale" del sistema. Il suo scopo principale è presidiare la validazione semantica e formale dei dati JSON in ingresso prima di qualsiasi elaborazione logica o persistenza sulla blockchain. In questo strato si implementano espressioni regolari e controlli rigorosi sui tipi di dato per bloccare sul nascere input malformati, campi inattesi o attacchi di Lisp Command Injection.
+
+
+======================================================
+FILE: ./schemas/user_schema.py
+======================================================
+"""
+schemas/user_schema.py
+Definizione dei contratti JSON Schema e helper di namespacing per la classe Users.
+"""
+
+# 1. Schema per l'onboarding / registrazione (payload HTTP in ingresso)
+USER_REGISTRATION_SCHEMA = {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "UserRegistrationPayload",
+    "type": "object",
+    "properties": {
+        "matricola": {
+            "type": "string",
+            "pattern": r"^[0-9]{7}$"
+        },
+        "name": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 50
+        },
+        "surname": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 50
+        },
+        "email": {
+            "type": "string",
+            "format": "email",
+            "maxLength": 100
+        },
+        "password": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 128
+        },
+        "role": {
+            "type": "string",
+            "enum": ["SEGRETERIA", "DOCENTE", "STUDENTE"]
+        }
+    },
+    "required": ["matricola", "name", "surname", "email", "password", "role"],
+    "additionalProperties": False
+}
+
+# 2. Schema per la persistenza del record On-Chain (World State di Fabric)
+USER_ONCHAIN_SCHEMA = {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "UserOnChainRecord",
+    "type": "object",
+    "properties": {
+        "matricola": {
+            "type": "string",
+            "pattern": r"^[0-9]{7}$"
+        },
+        "roles": {
+            "type": "array",
+            "items": {
+                "type": "string",
+                "enum": ["SEGRETERIA", "DOCENTE", "STUDENTE"]
+            },
+            "minItems": 1
+        },
+        "name": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 50
+        },
+        "surname": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 50
+        },
+        "email": {
+            "type": "string",
+            "format": "email",
+            "maxLength": 100
+        },
+        "password_hash": {
+            "type": "string",
+            "maxLength": 255
+        },
+        "status": {
+            "type": "string",
+            "enum": ["ACTIVE", "SUSPENDED"]
+        },
+        "created_at": {
+            "type": "integer"
+        },
+        "updated_at": {
+            "type": "integer"
+        }
+    },
+    "required": [
+        "matricola",
+        "roles",
+        "name",
+        "surname",
+        "email",
+        "password_hash",
+        "status",
+        "created_at",
+        "updated_at"
+    ],
+    "additionalProperties": False
+}
+
+# 3. Helper per determinare la chiave on-chain (Namespacing)
+def build_user_key(matricola: str) -> str:
+    """Costruisce la chiave logica deterministica per il World State di Fabric."""
+    return f"user:{matricola}"
+
+
+======================================================
+FILE: ./schemas/validator.py
+======================================================
+import jsonschema
+
+def validate_schema(data: dict, schema: dict) -> None:
+    """
+    Valida un dizionario dati contro un contratto JSON Schema.
+    Solleva jsonschema.exceptions.ValidationError se il payload non è conforme.
+    """
+    jsonschema.validate(instance=data, schema=schema)
+
+
+======================================================
+FILE: ./schemas/__init__.py
+======================================================
+"""
+schemas package
+Espone il validatore e tutti i contratti JSON Schema del sistema UniChain.
+"""
+from schemas.validator import validate_schema
+
+from schemas.user_schema import (
+    USER_REGISTRATION_SCHEMA,
+    USER_ONCHAIN_SCHEMA,
+    build_user_key,
+)
+
+from schemas.exam_schema import (
+    EXAM_SESSION_CREATE_SCHEMA,
+    EXAM_SESSION_ONCHAIN_SCHEMA,
+    EXAM_BOOKING_CREATE_SCHEMA,
+    EXAM_BOOKING_ONCHAIN_SCHEMA,
+    build_exam_key,
+    build_booking_key,
+)
+
+from schemas.grade_schema import (
+    GRADE_RECORD_CREATE_SCHEMA,
+    GRADE_ONCHAIN_SCHEMA,
+    CAREER_TRANSFER_REQUEST_SCHEMA,
+    CAREER_WITHDRAWAL_REQUEST_SCHEMA,
+    CAREER_GRADUATE_SCHEMA,
+    CAREER_ONCHAIN_SCHEMA,
+    build_grade_key,
+    build_career_key,
+)
+
+__all__ = [
+    "validate_schema",
+    "USER_REGISTRATION_SCHEMA",
+    "USER_ONCHAIN_SCHEMA",
+    "build_user_key",
+    "EXAM_SESSION_CREATE_SCHEMA",
+    "EXAM_SESSION_ONCHAIN_SCHEMA",
+    "EXAM_BOOKING_CREATE_SCHEMA",
+    "EXAM_BOOKING_ONCHAIN_SCHEMA",
+    "build_exam_key",
+    "build_booking_key",
+    "GRADE_RECORD_CREATE_SCHEMA",
+    "GRADE_ONCHAIN_SCHEMA",
+    "CAREER_TRANSFER_REQUEST_SCHEMA",
+    "CAREER_WITHDRAWAL_REQUEST_SCHEMA",
+    "CAREER_GRADUATE_SCHEMA",
+    "CAREER_ONCHAIN_SCHEMA",
+    "build_grade_key",
+    "build_career_key",
+]
+
+'''
+per fare un test si usa questo comando da mettere sul bash rimanendo nella cartella Backend!python -c "
+from schemas import validate_schema, USER_REGISTRATION_SCHEMA, build_user_key
+import jsonschema
+
+# 1. Test dati validi
+payload_ok = {
+    'matricola': '0386587',
+    'name': 'Mario',
+    'surname': 'Rossi',
+    'email': 'mario.rossi@unichain.it',
+    'password': 'PasswordSegreta123',
+    'role': 'STUDENTE'
+}
+try:
+    validate_schema(payload_ok, USER_REGISTRATION_SCHEMA)
+    print('PASS 1: Payload valido accettato.')
+except Exception as e:
+    print('FAIL 1: Errore inatteso ->', e)
+
+# 2. Test chiave deterministica
+chiave = build_user_key(payload_ok['matricola'])
+assert chiave == 'user:0386587', 'Errore build_user_key'
+print('PASS 2: Helper namespacing generato ->', chiave)
+
+# 3. Test blocco matricola non a 7 cifre
+payload_errato = payload_ok.copy()
+payload_errato['matricola'] = '1234'
+try:
+    validate_schema(payload_errato, USER_REGISTRATION_SCHEMA)
+    print('FAIL 3: La matricola errata non doveva passare.')
+except jsonschema.exceptions.ValidationError:
+    print('PASS 3: Matricola corta bloccata correttamente.')
+
+# 4. Test blocco injection / campi extra
+payload_inject = payload_ok.copy()
+payload_inject['cmd_inject'] = '(eval (del-all))'
+try:
+    validate_schema(payload_inject, USER_REGISTRATION_SCHEMA)
+    print('FAIL 4: Il campo extra non doveva passare.')
+except jsonschema.exceptions.ValidationError:
+    print('PASS 4: Campo extra bloccato da additionalProperties.')
+"
+'''
+
+
+
+======================================================
+FILE: ./security/audit_logger.py
+======================================================
+"""
+security/audit_logger.py
+Middleware e utility per la telemetria di sicurezza on-chain:
+- Cattura richieste/risposte HTTP
+- Cifra metadati sensibili (IP, User-Agent) tramite AES-256-GCM
+- Scrive il record immutabile sul Ledger (classe AuditLogs) tramite LispClient
+"""
+
+import time
+import hashlib
+from flask import request, g
+from security.crypto import encrypt_aes_gcm
+from fabric.lisp_client import LispClient
+from config import Config
+
+# Chiave simmetrica a 256 bit (32 byte) per AES-256-GCM
+# In produzione viene caricata da config.py / variabili d'ambiente
+AUDIT_AES_KEY = Config.AUDIT_AES_KEY
+
+
+def generate_log_id(
+    description: str,
+    created_at: int,
+    level: str,
+    from_ip: str,
+    user_agent: str,
+    method: str,
+    payload_size: int,
+) -> str:
+    """
+    Calcola l'hash univoco SHA-256 dei parametri dell'evento
+    per garantire l'integrità e la non-ripudiabilità del record.
+    """
+    raw_data = (
+        f"{description}:{created_at}:{level}:{from_ip}:"
+        f"{user_agent}:{method}:{payload_size}"
+    )
+    return hashlib.sha256(raw_data.encode("utf-8")).hexdigest()
+
+
+def log_audit_event(
+    description: str,
+    level: str = "INFO",
+    status_code: int = 200,
+    anomaly_trigger: str | None = None,
+    aes_key: bytes = AUDIT_AES_KEY,
+) -> dict:
+    """
+    Costruisce il payload del log, cifra i campi sensibili e persiste
+    l'evento sulla blockchain Fabric nella classe AuditLogs.
+    """
+    now = int(time.time())
+
+    # Estrazione metadati da Flask request
+    raw_ip = request.headers.get("X-Forwarded-For", request.remote_addr or "127.0.0.1")
+    if "," in raw_ip:
+        raw_ip = raw_ip.split(",")[0].strip()
+
+    raw_ua = request.headers.get("User-Agent", "UNKNOWN_AGENT")
+    method = request.method
+    payload_size = request.content_length or 0
+
+    # Cifratura simmetrica AES-256-GCM dei metadati personali
+    from_ip_encrypted = encrypt_aes_gcm(raw_ip, aes_key)
+    user_agent_encrypted = encrypt_aes_gcm(raw_ua, aes_key)
+
+    # Identificativo univoco
+    log_id = generate_log_id(
+        description=description,
+        created_at=now,
+        level=level,
+        from_ip=raw_ip,
+        user_agent=raw_ua,
+        method=method,
+        payload_size=payload_size,
+    )
+
+    # Dati dell'attore autenticato (se presenti dal JWT)
+    actor_matricola = None
+    actor_role = None
+    if hasattr(g, "current_user") and g.current_user:
+        actor_matricola = g.current_user.get("matricola")
+        roles = g.current_user.get("roles", [])
+        actor_role = roles[0] if roles else None
+
+    # Struttura del valore conforme alle specifiche on-chain
+    log_value = {
+        "id": log_id,
+        "description": description,
+        "created_at": now,
+        "level": level,
+        "status_code": status_code,
+        "method": method,
+        "payload_size": payload_size,
+        "from_ip": from_ip_encrypted,
+        "user_agent": user_agent_encrypted,
+        "actor_matricola": actor_matricola,
+        "actor_role": actor_role,
+        "anomaly_trigger": anomaly_trigger,
+    }
+
+    # Chiave deterministica on-chain
+    log_key = f"log:{now}:{log_id[:16]}"
+
+    # Persistenza sulla Blockchain tramite il Livello 1 (Fabric Adapter)
+    try:
+        response = LispClient.add_kv(
+            class_name="AuditLogs",
+            key=log_key,
+            value=log_value,
+        )
+        return {"log_key": log_key, "fabric_response": response}
+    except Exception as e:
+        # Fallback difensivo: l'errore del logger non deve interrompere il gateway
+        return {"log_key": log_key, "error": str(e)}
+
+
+def init_audit_middleware(app):
+    """
+    Registra l'hook after_request su Flask per catturare automaticamente
+    il completamento di ciascuna transazione e registrarne la telemetria.
+    """
+    @app.after_request
+    def after_request_callback(response):
+        # Esclude chiamate statiche o favicon se presenti
+        if request.path.startswith("/static"):
+            return response
+
+        # Rilevamento automatico di severità e codice anomalia da eventuali header o status
+        level = "INFO"
+        anomaly_code = getattr(g, "anomaly_trigger", None)
+
+        if response.status_code >= 400:
+            level = "ALERT"
+            if response.status_code == 403 and not anomaly_code:
+                anomaly_code = "U3"
+
+        description = f"HTTP {request.method} {request.path} -> {response.status_code}"
+
+        # Registrazione asincrona o diretta
+        log_audit_event(
+            description=description,
+            level=level,
+            status_code=response.status_code,
+            anomaly_trigger=anomaly_code,
+        )
+
+        return response
+
+
+======================================================
+FILE: ./security/crypto.py
+======================================================
+"""
+security/crypto.py
+Gestione delle operazioni crittografiche del Security Gateway:
+- Hashing e verifica sicura delle password tramite Bcrypt
+- Cifratura e decifratura simmetrica autenticata AES-256-GCM per metadati sensibili (IP, User-Agent)
+"""
+
+import os
+import base64
+import bcrypt
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+# ==============================================================================
+# 1. HASHING PASSWORD (BCRYPT)
+# ==============================================================================
+
+def hash_password(plain_password: str) -> str:
+    """
+    Genera un hash sicuro bcrypt con salt a 12 round per la password in chiaro.
+    Restituisce una stringa UTF-8 pronta per il campo 'password_hash' on-chain.
+    """
+    salt = bcrypt.gensalt(rounds=12)
+    pwd_bytes = plain_password.encode("utf-8")
+    hashed = bcrypt.hashpw(pwd_bytes, salt)
+    return hashed.decode("utf-8")
+
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    """
+    Verifica computazionalmente se una password in chiaro corrisponde al digest salvato.
+    Restituisce True se valida, False altrimenti.
+    """
+    try:
+        return bcrypt.checkpw(
+            plain_password.encode("utf-8"),
+            hashed_password.encode("utf-8")
+        )
+    except Exception:
+        return False
+
+
+# ==============================================================================
+# 2. CIFRATURA SIMMETRICA METADATI DI AUDIT (AES-256-GCM)
+# ==============================================================================
+
+def encrypt_aes_gcm(plaintext: str, key: bytes) -> str:
+    """
+    Cifra una stringa arbitraria in AES-256-GCM.
+    Richiede una chiave simmetrica a 256 bit (32 byte).
+    Restituisce una stringa codificata in Base64 contenente: nonce (12B) + ciphertext + tag (16B).
+    """
+    if len(key) != 32:
+        raise ValueError("La chiave AES-256 deve essere esattamente di 32 byte.")
+
+    aesgcm = AESGCM(key)
+    nonce = os.urandom(12)  # Nonce standard a 96 bit (12 byte)
+    ciphertext_and_tag = aesgcm.encrypt(nonce, plaintext.encode("utf-8"), None)
+    
+    # Concatena nonce + ciphertext/tag e serializza in Base64
+    payload = nonce + ciphertext_and_tag
+    return base64.b64encode(payload).decode("utf-8")
+
+
+def decrypt_aes_gcm(encrypted_b64: str, key: bytes) -> str:
+    """
+    Decifra la stringa Base64 verificando l'integrità del tag di autenticazione GCM.
+    Restituisce la stringa in chiaro originale.
+    """
+    if len(key) != 32:
+        raise ValueError("La chiave AES-256 deve essere esattamente di 32 byte.")
+
+    raw_data = base64.b64decode(encrypted_b64.encode("utf-8"))
+    nonce = raw_data[:12]
+    ciphertext_and_tag = raw_data[12:]
+    
+    aesgcm = AESGCM(key)
+    plaintext_bytes = aesgcm.decrypt(nonce, ciphertext_and_tag, None)
+    return plaintext_bytes.decode("utf-8")
+
+
+======================================================
+FILE: ./security/rbac.py
+======================================================
+"""
+security/rbac.py
+Gestione delle sessioni stateless e controllo accessi basato sui ruoli (RBAC):
+- Generazione e validazione dei JSON Web Token (JWT)
+- Decoratore @require_role per proteggere le route REST
+- Intercettazione dell'Anomalia U3 (Violazione del controllo accessi)
+"""
+
+import time
+from functools import wraps
+from flask import request, jsonify, g
+import jwt
+from config import Config
+
+
+
+# Configurazioni di default (sovrascrivibili da config.py)
+JWT_SECRET = Config.JWT_SECRET
+JWT_ALGORITHM = "HS256"
+JWT_EXPIRATION_SECONDS = 28800  # 8 ore di validità
+
+
+# ==============================================================================
+# 1. GESTIONE DEI TOKEN JWT
+# ==============================================================================
+
+def create_access_token(
+    matricola: str,
+    roles: list[str],
+    expires_in: int = JWT_EXPIRATION_SECONDS,
+    secret_key: str = JWT_SECRET
+) -> str:
+    """
+    Genera un token JWT firmato crittograficamente con algoritmo HS256.
+    Include nel payload matricola, ruoli, timestamp di emissione e di scadenza.
+    """
+    now = int(time.time())
+    payload = {
+        "matricola": matricola,
+        "roles": roles,
+        "iat": now,
+        "exp": now + expires_in
+    }
+    return jwt.encode(payload, secret_key, algorithm=JWT_ALGORITHM)
+
+
+def decode_access_token(token: str, secret_key: str = JWT_SECRET) -> dict:
+    """
+    Decodifica e verifica la firma e la validità temporale del token JWT.
+    Solleva eccezioni PyJWT se il token è scaduto, manomesso o non valido.
+    """
+    return jwt.decode(token, secret_key, algorithms=[JWT_ALGORITHM])
+
+
+# ==============================================================================
+# 2. DECORATORE RBAC PER FLASK (@require_role)
+# ==============================================================================
+
+def require_role(allowed_roles: list[str]):
+    """
+    Decoratore per endpoint Flask.
+    1. Estrae il token JWT dall'header 'Authorization: Bearer <token>'
+    2. Valida la firma e la scadenza del token
+    3. Controlla che almeno uno dei ruoli dell'utente sia presente tra gli allowed_roles
+    4. Se l'utente non ha i permessi necessari, solleva l'Anomalia U3 (403 Forbidden)
+    5. Inietta i dati dell'utente autenticato in flask.g.current_user
+    """
+    def decorator(f):
+        @wraps(f)
+        def decorated_function(*args, **kwargs):
+            auth_header = request.headers.get("Authorization", None)
+            
+            # Controllo presenza e formato header
+            if not auth_header or not auth_header.startswith("Bearer "):
+                return jsonify({
+                    "error": "Token di autenticazione mancante o formato non valido",
+                    "code": "MISSING_TOKEN"
+                }), 401
+
+            token = auth_header.split(" ", 1)[1].strip()
+
+            try:
+                payload = decode_access_token(token)
+            except jwt.ExpiredSignatureError:
+                return jsonify({
+                    "error": "Sessione scaduta: effettuare nuovamente il login",
+                    "code": "TOKEN_EXPIRED"
+                }), 401
+            except jwt.InvalidTokenError:
+                return jsonify({
+                    "error": "Token non valido o manomesso",
+                    "code": "INVALID_TOKEN"
+                }), 401
+
+            # Controllo ruoli (RBAC)
+            user_roles = payload.get("roles", [])
+            has_permission = any(role in allowed_roles for role in user_roles)
+
+            if not has_permission:
+                # Violazione del controllo accessi: Anomalia U3
+                return jsonify({
+                    "error": "Accesso negato: privilegi insufficienti per questa operazione",
+                    "code": "U3",
+                    "anomaly": "Violazione del controllo accessi (RBAC)"
+                }), 403
+
+            # Memorizza i dettagli dell'utente nel contesto globale della richiesta
+            g.current_user = payload
+
+            return f(*args, **kwargs)
+        return decorated_function
+    return decorator
+
+
+======================================================
+FILE: ./security/README
+======================================================
+
+
+
+======================================================
+FILE: ./security/__init__.py
+======================================================
+"""
+security package
+Policy Enforcement Point, Crittografia e Audit Logger per UniChain.
+"""
+
+from security.crypto import (
+    hash_password,
+    verify_password,
+    encrypt_aes_gcm,
+    decrypt_aes_gcm,
+)
+
+from security.rbac import (
+    create_access_token,
+    decode_access_token,
+    require_role,
+)
+
+from security.audit_logger import (
+    log_audit_event,
+    init_audit_middleware,
+)
+
+__all__ = [
+    "hash_password",
+    "verify_password",
+    "encrypt_aes_gcm",
+    "decrypt_aes_gcm",
+    "create_access_token",
+    "decode_access_token",
+    "require_role",
+    "log_audit_event",
+    "init_audit_middleware",
+]
+
+
+======================================================
+FILE: ./services/admin_service.py
+======================================================
+"""
+services/admin_service.py
+Livello 3: Business Logic & Chain-of-Events Engine per la Segreteria Studenti.
+Gestisce stato utenze, passaggi di corso, rinunce e proclamazione di laurea (Anomalia U6).
+"""
+
+import time
+from typing import Any, Dict, Optional
+
+from fabric.lisp_client import LispClient
+from schemas.user_schema import build_user_key
+from schemas.grade_schema import build_career_key
+
+
+class AdminService:
+
+    @staticmethod
+    def update_user_status(matricola: str, new_status: str) -> Dict[str, Any]:
+        """
+        Aggiorna lo stato operativo di un account utente (ACTIVE | SUSPENDED).
+        """
+        now = int(time.time())
+        user_key = build_user_key(matricola)
+
+        user_res = LispClient.get_kv("Users", user_key)
+        user_record = user_res.get("value")
+
+        if not user_record:
+            return {"success": False, "error": f"Utente {matricola} non trovato", "code": "NOT_FOUND"}
+
+        user_record["status"] = new_status
+        user_record["updated_at"] = now
+
+        res = LispClient.add_kv("Users", user_key, user_record)
+        if res.get("status") == "ERROR":
+            return {"success": False, "error": res.get("message", "Errore Fabric"), "code": "FABRIC_ERR"}
+
+        return {"success": True, "data": user_record}
+
+    @staticmethod
+    def approve_course_transfer(
+        matricola: str,
+        new_degree_id: str,
+        notes: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Convalida il passaggio di corso di uno studente verso un nuovo ordinamento didattico.
+        """
+        now = int(time.time())
+        career_key = build_career_key(matricola)
+
+        career_res = LispClient.get_kv("Careers", career_key)
+        career = career_res.get("value")
+
+        if not career:
+            return {"success": False, "error": f"Carriera per la matricola {matricola} non trovata", "code": "NOT_FOUND"}
+
+        if career.get("status") in ["WITHDRAWN", "GRADUATED"]:
+            return {
+                "success": False,
+                "error": f"Impossibile trasferire una carriera chiusa (stato: {career.get('status')})",
+                "code": "U6"
+            }
+
+        career["degree_id"] = new_degree_id
+        career["status"] = "ENROLLED"
+        career["last_updated"] = now
+        if notes:
+            career["transfer_notes"] = notes
+
+        LispClient.add_kv("Careers", career_key, career)
+        return {"success": True, "data": career}
+
+    @staticmethod
+    def approve_withdrawal(matricola: str, reason: str) -> Dict[str, Any]:
+        """
+        Formalizza la rinuncia agli studi: imposta la carriera su WITHDRAWN
+        e contestualmente disattiva l'utenza (status: SUSPENDED) per precludere nuove operazioni.
+        """
+        now = int(time.time())
+        career_key = build_career_key(matricola)
+        user_key = build_user_key(matricola)
+
+        career_res = LispClient.get_kv("Careers", career_key)
+        career = career_res.get("value")
+
+        if not career:
+            return {"success": False, "error": f"Carriera per la matricola {matricola} non trovata", "code": "NOT_FOUND"}
+
+        if career.get("status") in ["WITHDRAWN", "GRADUATED"]:
+            return {
+                "success": False,
+                "error": f"La carriera risulta già conclusa (stato: {career.get('status')})",
+                "code": "INVALID_STATE"
+            }
+
+        # 1. Aggiornamento stato carriera on-chain
+        career["status"] = "WITHDRAWN"
+        career["withdrawal_reason"] = reason
+        career["last_updated"] = now
+        LispClient.add_kv("Careers", career_key, career)
+
+        # 2. Sospensione utenza collegata per precludere accessi futuri
+        user_res = LispClient.get_kv("Users", user_key)
+        user_record = user_res.get("value")
+        if user_record:
+            user_record["status"] = "SUSPENDED"
+            user_record["updated_at"] = now
+            LispClient.add_kv("Users", user_key, user_record)
+
+        return {"success": True, "data": career}
+
+    @staticmethod
+    def approve_graduation(
+        matricola: str,
+        final_grade: int,
+        has_honors: bool
+    ) -> Dict[str, Any]:
+        """
+        Valida i requisiti di carriera e proclama la laurea dello studente.
+        Se i CFU o gli esami non risultano completati, solleva l'Anomalia U6.
+        """
+        now = int(time.time())
+        career_key = build_career_key(matricola)
+
+        career_res = LispClient.get_kv("Careers", career_key)
+        career = career_res.get("value")
+
+        if not career:
+            return {"success": False, "error": f"Carriera per la matricola {matricola} non trovata", "code": "NOT_FOUND"}
+
+        if career.get("status") == "GRADUATED":
+            return {"success": False, "error": "Studente già laureato", "code": "ALREADY_GRADUATED"}
+
+        if career.get("status") == "WITHDRAWN":
+            return {"success": False, "error": "Impossibile laureare uno studente rinunciatario", "code": "U6"}
+
+        # ----------------------------------------------------------------------
+        # Controllo Determinismo Accademico: Integrità dei CFU (Anomalia U6)
+        # ----------------------------------------------------------------------
+        cfu_total_required = career.get("cfu_total", 180)
+        passed_exams = career.get("passed_exams", [])
+
+        # Stima crediti: per convenzione o conteggio esami superati
+        # Calcolo CFU effettivi: ogni esame verbalizzato corrisponde a CFU (o campo cfu_acquired)
+        cfu_acquired = career.get("cfu_acquired")
+        if cfu_acquired is None:
+            # Fallback se non esplicitato: ogni esame vale tipicamente 6 CFU o si conta la lista
+            cfu_acquired = len(passed_exams) * 6
+
+        if cfu_acquired < cfu_total_required:
+            return {
+                "success": False,
+                "error": f"Incongruenza di carriera: acquisiti {cfu_acquired}/{cfu_total_required} CFU necessari",
+                "code": "U6"
+            }
+
+        # Consolidamento Proclamazione di Laurea on-chain
+        career["status"] = "GRADUATED"
+        career["final_grade"] = final_grade
+        career["has_honors"] = has_honors
+        career["graduated_at"] = now
+        career["last_updated"] = now
+
+        LispClient.add_kv("Careers", career_key, career)
+        return {"success": True, "data": career}
+
+
+======================================================
+FILE: ./services/auth_service.py
+======================================================
+"""
+services/auth_service.py
+Livello 3: Business Logic Engine per Autenticazione, Verifica Credenziali e Onboarding.
+Interagisce con security/ (Bcrypt, JWT) e fabric/ (Users, Careers).
+"""
+
+import time
+from typing import Any, Dict, List, Optional
+
+from fabric.lisp_client import LispClient
+from schemas.user_schema import build_user_key
+from schemas.grade_schema import build_career_key
+from security import hash_password, verify_password, create_access_token
+
+
+class AuthService:
+
+    @staticmethod
+    def authenticate_user(matricola: str, plain_password: str) -> Dict[str, Any]:
+        """
+        Valida le credenziali dell'utente sul World State ed emette il token JWT.
+        """
+        user_key = build_user_key(matricola)
+        user_res = LispClient.get_kv("Users", user_key)
+        user_record = user_res.get("value")
+
+        if not user_record:
+            return {
+                "success": False,
+                "error": "Credenziali non valide o utente inesistente",
+                "code": "INVALID_CREDENTIALS"
+            }
+
+        # Controllo stato amministrativo
+        if user_record.get("status") != "ACTIVE":
+            return {
+                "success": False,
+                "error": "Accesso negato: utenza sospesa o non attiva",
+                "code": "ACCOUNT_SUSPENDED"
+            }
+
+        # Verifica crittografica dell'hash bcrypt
+        stored_hash = user_record.get("password_hash", "")
+        if not verify_password(plain_password, stored_hash):
+            return {
+                "success": False,
+                "error": "Credenziali non valide",
+                "code": "INVALID_CREDENTIALS"
+            }
+
+        # Rilascio del token JWT stateless
+        roles = user_record.get("roles", [])
+        access_token = create_access_token(
+            matricola=user_record["matricola"],
+            roles=roles
+        )
+
+        return {
+            "success": True,
+            "access_token": access_token,
+            "token_type": "Bearer",
+            "user": {
+                "matricola": user_record["matricola"],
+                "roles": roles,
+                "name": user_record.get("name"),
+                "surname": user_record.get("surname"),
+                "email": user_record.get("email")
+            }
+        }
+
+    @staticmethod
+    def register_user(
+        matricola: str,
+        name: str,
+        surname: str,
+        email: str,
+        plain_password: str,
+        role: str,
+        degree_id: Optional[str] = "ING-INF"
+    ) -> Dict[str, Any]:
+        """
+        Registra una nuova utenza sul Ledger accademico e inizializza
+        la relativa carriera qualora il ruolo sia STUDENTE.
+        """
+        now = int(time.time())
+        user_key = build_user_key(matricola)
+
+        # 1. Verifica collisione di matricola
+        existing_user = LispClient.get_kv("Users", user_key).get("value")
+        if existing_user:
+            return {
+                "success": False,
+                "error": f"L'utente con matricola {matricola} risulta già registrato",
+                "code": "DUPLICATE_USER"
+            }
+
+        # 2. Hashing della password tramite Bcrypt
+        pwd_hash = hash_password(plain_password)
+
+        # 3. Payload utente per il World State
+        user_payload = {
+            "matricola": matricola,
+            "roles": [role.upper()],
+            "name": name,
+            "surname": surname,
+            "email": email,
+            "password_hash": pwd_hash,
+            "status": "ACTIVE",
+            "created_at": now,
+            "updated_at": now
+        }
+
+        res_user = LispClient.add_kv("Users", user_key, user_payload)
+        if res_user.get("status") == "ERROR":
+            return {"success": False, "error": res_user.get("message", "Errore persistenza Fabric"), "code": "FABRIC_ERR"}
+
+        # 4. Inizializzazione automatica carriera per il ruolo STUDENTE
+        if role.upper() == "STUDENTE":
+            career_key = build_career_key(matricola)
+            career_payload = {
+                "student_matricola": matricola,
+                "degree_id": degree_id,
+                "cfu_total": 180,
+                "cfu_acquired": 0,
+                "status": "ENROLLED",
+                "passed_exams": [],
+                "created_at": now,
+                "last_updated": now
+            }
+            LispClient.add_kv("Careers", career_key, career_payload)
+
+        # Omissione dell'hash nella risposta per sicurezza
+        safe_response = user_payload.copy()
+        safe_response.pop("password_hash", None)
+
+        return {"success": True, "data": safe_response}
+
+
+======================================================
+FILE: ./services/exam_service.py
+======================================================
+"""
+services/exam_service.py
+Livello 3: Business Logic & Chain-of-Events Engine per Appelli e Prenotazioni.
+Gestisce vincoli temporali, propedeuticità (Anomalia U2) e persistenza on-chain.
+"""
+
+import time
+import uuid
+from typing import Any, Dict, Optional
+
+from fabric.lisp_client import LispClient
+from schemas.exam_schema import (
+    build_exam_key,
+    build_booking_key,
+)
+from schemas.grade_schema import build_career_key
+
+
+class ExamService:
+
+    @staticmethod
+    def create_exam_session(
+        docente_matricola: str,
+        course_id: str,
+        exam_date: int,
+        reg_start_date: int,
+        reg_end_date: int,
+        session_type: str,
+        max_seats: Optional[int] = None
+    ) -> Dict[str, Any]:
+        """
+        Crea una nuova sessione d'esame nel World State (classe Appelli).
+        Verifica i vincoli cronologici e il tetto massimo di appelli ordinari.
+        """
+        now = int(time.time())
+
+        # 1. Verifica coerenza delle finestre temporali
+        if not (reg_start_date < reg_end_date <= exam_date):
+            return {
+                "success": False,
+                "error": "Incongruenza temporale: reg_start < reg_end <= exam_date",
+                "code": "U1"
+            }
+
+        # 2. Generazione identificativo univoco sessione
+        session_id = f"SES-{course_id}-{uuid.uuid4().hex[:8].upper()}"
+        exam_key = build_exam_key(session_id)
+
+        # 3. Payload da consolidare on-chain
+        appello_payload = {
+            "session_id": session_id,
+            "course_id": course_id,
+            "docente_matricola": docente_matricola,
+            "exam_date": exam_date,
+            "reg_start_date": reg_start_date,
+            "reg_end_date": reg_end_date,
+            "session_type": session_type,
+            "max_seats": max_seats,
+            "status": "OPEN",
+            "created_at": now
+        }
+
+        # 4. Scrittura on-chain tramite il connettore Fabric
+        res = LispClient.add_kv("Appelli", exam_key, appello_payload)
+        if res.get("status") == "ERROR":
+            return {"success": False, "error": res.get("message", "Errore Fabric"), "code": "FABRIC_ERR"}
+
+        return {"success": True, "data": appello_payload}
+
+    @staticmethod
+    def close_exam_session(session_id: str, docente_matricola: str) -> Dict[str, Any]:
+        """
+        Conclude e sigilla una sessione d'esame impostandola su CLOSED.
+        Verifica che l'operatore sia l'effettivo titolare della cattedra.
+        """
+        exam_key = build_exam_key(session_id)
+        res = LispClient.get_kv("Appelli", exam_key)
+        appello = res.get("value")
+
+        if not appello:
+            return {"success": False, "error": "Sessione d'esame non trovata", "code": "NOT_FOUND"}
+
+        # Verifica titolarità docente
+        if appello.get("docente_matricola") != docente_matricola:
+            return {
+                "success": False,
+                "error": "Violazione cattedra: non sei il docente titolare dell'appello",
+                "code": "U3"
+            }
+
+        appello["status"] = "CLOSED"
+        appello["closed_at"] = int(time.time())
+
+        LispClient.add_kv("Appelli", exam_key, appello)
+        return {"success": True, "data": appello}
+
+    @staticmethod
+    def book_exam_session(
+        session_id: str,
+        student_matricola: str,
+        notes: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Elabora la prenotazione di uno studente all'appello d'esame.
+        Esegue i controlli deterministici su stato sessione, finestra temporale,
+        e propedeuticità/carriera (generando Anomalia U2 in caso di blocco).
+        """
+        now = int(time.time())
+
+        # 1. Recupero e verifica dello stato dell'appello
+        exam_key = build_exam_key(session_id)
+        res_exam = LispClient.get_kv("Appelli", exam_key)
+        appello = res_exam.get("value")
+
+        if not appello:
+            return {"success": False, "error": "Appello d'esame inesistente", "code": "NOT_FOUND"}
+
+        if appello.get("status") != "OPEN":
+            return {
+                "success": False,
+                "error": f"Sessione non aperta alle iscrizioni (stato: {appello.get('status')})",
+                "code": "U1"
+            }
+
+        # 2. Controllo finestra temporale d'iscrizione
+        if not (appello["reg_start_date"] <= now <= appello["reg_end_date"]):
+            return {
+                "success": False,
+                "error": "Finestra temporale per le prenotazioni chiusa o non ancora attiva",
+                "code": "U1"
+            }
+
+        # 3. Verifica preventiva di carriera e propedeuticità (Anomalia U2)
+        career_key = build_career_key(student_matricola)
+        res_career = LispClient.get_kv("Careers", career_key)
+        career = res_career.get("value")
+
+        if not career:
+            return {
+                "success": False,
+                "error": "Carriera accademica non trovata sul ledger",
+                "code": "U2"
+            }
+
+        if career.get("status") != "ENROLLED":
+            return {
+                "success": False,
+                "error": f"Iscrizione non consentita: stato carriera '{career.get('status')}'",
+                "code": "U2"
+            }
+
+        # Verifica che l'esame non sia già stato verbalizzato con esito positivo
+        passed_exams = career.get("passed_exams", [])
+        if any(item.get("course_id") == appello["course_id"] for item in passed_exams):
+            return {
+                "success": False,
+                "error": "Esame già superato e presente nel libretto elettronico",
+                "code": "U2"
+            }
+
+        # 4. Verifica prenotazione pregressa
+        booking_key = build_booking_key(session_id, student_matricola)
+        res_booking = LispClient.get_kv("Prenotazioni", booking_key)
+        existing_booking = res_booking.get("value")
+
+        if existing_booking and existing_booking.get("status") == "CONFIRMED":
+            return {
+                "success": False,
+                "error": "Studente già regolarmente prenotato a questo appello",
+                "code": "DUPLICATE_BOOKING"
+            }
+
+        # 5. Persistenza dell'evento di prenotazione on-chain
+        booking_payload = {
+            "session_id": session_id,
+            "student_matricola": student_matricola,
+            "booking_date": now,
+            "status": "CONFIRMED",
+            "notes": notes
+        }
+
+        LispClient.add_kv("Prenotazioni", booking_key, booking_payload)
+        return {"success": True, "data": booking_payload}
+
+    @staticmethod
+    def cancel_booking(session_id: str, student_matricola: str) -> Dict[str, Any]:
+        """
+        Consente la revoca dell'iscrizione all'appello prima del termine delle prenotazioni.
+        """
+        now = int(time.time())
+        booking_key = build_booking_key(session_id, student_matricola)
+
+        res_booking = LispClient.get_kv("Prenotazioni", booking_key)
+        booking = res_booking.get("value")
+
+        if not booking or booking.get("status") != "CONFIRMED":
+            return {"success": False, "error": "Nessuna prenotazione attiva trovata", "code": "NOT_FOUND"}
+
+        # Verifica finestra appello
+        exam_key = build_exam_key(session_id)
+        res_exam = LispClient.get_kv("Appelli", exam_key)
+        appello = res_exam.get("value")
+
+        if appello and now > appello.get("reg_end_date", 0):
+            return {
+                "success": False,
+                "error": "Finestra di cancellazione scaduta: iscrizioni chiuse",
+                "code": "U1"
+            }
+
+        booking["status"] = "CANCELLED"
+        booking["cancelled_at"] = now
+
+        LispClient.add_kv("Prenotazioni", booking_key, booking_payload := booking)
+        return {"success": True, "data": booking_payload}
+
+
+======================================================
+FILE: ./services/grade_service.py
+======================================================
+"""
+services/grade_service.py
+Livello 3: Business Logic & Chain-of-Events Engine per Verbalizzazione Voti e Carriere.
+Presidia l'esclusività della cattedra (Anomalia U3), la sequenza voto-prenotazione (Anomalia U4)
+e l'aggiornamento contestuale del libretto on-chain.
+"""
+
+import time
+from typing import Any, Dict, Optional
+
+from fabric.lisp_client import LispClient
+from schemas.exam_schema import build_exam_key, build_booking_key
+from schemas.grade_schema import build_grade_key, build_career_key
+
+
+class GradeService:
+
+    @staticmethod
+    def record_student_grade(
+        session_id: str,
+        student_matricola: str,
+        docente_matricola: str,
+        grade: Optional[int],
+        has_honors: bool,
+        outcome_status: str
+    ) -> Dict[str, Any]:
+        """
+        Registra la valutazione ufficiale dello studente per una specifica sessione d'esame.
+        Esegue i controlli deterministici su esclusività cattedra (U3) e sequenzialità (U4).
+        """
+        now = int(time.time())
+
+        # ----------------------------------------------------------------------
+        # 1. Verifica Esclusività della Cattedra (Anomalia U3)
+        # ----------------------------------------------------------------------
+        exam_key = build_exam_key(session_id)
+        res_exam = LispClient.get_kv("Appelli", exam_key)
+        appello = res_exam.get("value")
+
+        if not appello:
+            return {
+                "success": False,
+                "error": "Sessione d'esame inesistente",
+                "code": "NOT_FOUND"
+            }
+
+        if appello.get("docente_matricola") != docente_matricola:
+            return {
+                "success": False,
+                "error": "Violazione cattedra: solo il docente titolare può verbalizzare voti",
+                "code": "U3"
+            }
+
+        # ----------------------------------------------------------------------
+        # 2. Verifica Sequenza Canonica: Presenza Prenotazione (Anomalia U4)
+        # ----------------------------------------------------------------------
+        booking_key = build_booking_key(session_id, student_matricola)
+        res_booking = LispClient.get_kv("Prenotazioni", booking_key)
+        booking = res_booking.get("value")
+
+        if not booking or booking.get("status") != "CONFIRMED":
+            return {
+                "success": False,
+                "error": "Evento fuori sequenza: tentativo di verbalizzare un voto senza prenotazione confermata",
+                "code": "U4"
+            }
+
+        # ----------------------------------------------------------------------
+        # 3. Consolidamento del Voto sul Ledger (Classe Voti)
+        # ----------------------------------------------------------------------
+        grade_key = build_grade_key(session_id, student_matricola)
+        voto_payload = {
+            "session_id": session_id,
+            "student_matricola": student_matricola,
+            "docente_matricola": docente_matricola,
+            "grade": grade,
+            "has_honors": has_honors,
+            "outcome_status": outcome_status,
+            "signed_at": now
+        }
+
+        res_voto = LispClient.add_kv("Voti", grade_key, voto_payload)
+        if res_voto.get("status") == "ERROR":
+            return {"success": False, "error": res_voto.get("message", "Errore Fabric"), "code": "FABRIC_ERR"}
+
+        # ----------------------------------------------------------------------
+        # 4. Aggiornamento Contestuale della Carriera (Classe Careers)
+        # ----------------------------------------------------------------------
+        if outcome_status == "PASSED" and grade is not None:
+            career_key = build_career_key(student_matricola)
+            res_career = LispClient.get_kv("Careers", career_key)
+            career = res_career.get("value")
+
+            if career and career.get("status") == "ENROLLED":
+                # Verifica che non sia già registrato nel libretto per evitare duplicati
+                passed_exams = career.get("passed_exams", [])
+                course_id = appello.get("course_id", "CORSO-UNKNOWN")
+                
+                already_recorded = any(item.get("course_id") == course_id for item in passed_exams)
+                if not already_recorded:
+                    passed_exams.append({
+                        "course_id": course_id,
+                        "grade": grade,
+                        "has_honors": has_honors,
+                        "recorded_at": now
+                    })
+                    career["passed_exams"] = passed_exams
+                    career["last_updated"] = now
+                    LispClient.add_kv("Careers", career_key, career)
+
+        return {"success": True, "data": voto_payload}
+
+    @staticmethod
+    def get_grade_history(session_id: str, student_matricola: str) -> Dict[str, Any]:
+        """
+        Recupera la cronologia immutabile dei voti verbalizzati per uno studente.
+        """
+        grade_key = build_grade_key(session_id, student_matricola)
+        res = LispClient.get_key_history("Voti", grade_key)
+        return {"success": True, "history": res.get("history", [])}
+
+    @staticmethod
+    def get_student_transcript(student_matricola: str) -> Dict[str, Any]:
+        """
+        Recupera il libretto accademico dello studente (stato carriera ed esami verbalizzati).
+        """
+        career_key = build_career_key(student_matricola)
+        res = LispClient.get_kv("Careers", career_key)
+        career = res.get("value")
+
+        if not career:
+            return {"success": False, "error": "Carriera studente non trovata", "code": "NOT_FOUND"}
+
+        return {"success": True, "transcript": career}
+
+
+======================================================
+FILE: ./services/README
+======================================================
+
+
+
+======================================================
+FILE: ./services/__init__.py
+======================================================
+"""
+services package
+Livello 3: Business Logic & Chain-of-Events Engine per UniChain.
+Espone i controller di logica accademica e amministrativa verso il routing layer.
+"""
+
+from services.auth_service import AuthService
+from services.admin_service import AdminService
+from services.exam_service import ExamService
+from services.grade_service import GradeService
+
+__all__ = [
+    "AuthService",
+    "AdminService",
+    "ExamService",
+    "GradeService",
+]
+
+

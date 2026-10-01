@@ -104,6 +104,25 @@ USER_ONCHAIN_SCHEMA = {
     "additionalProperties": False
 }
 
+# Aggiungere in schemas/user_schema.py
+
+STUDENT_ENROLLMENT_SCHEMA = {
+    "type": "object",
+    "required": ["matricola", "name", "surname", "email", "password", "degree_id"],
+    "properties": {
+        "matricola": {
+            "type": "string",
+            "pattern": r"^[0-9]{7}$"
+        },
+        "name": {"type": "string", "minLength": 2, "maxLength": 50},
+        "surname": {"type": "string", "minLength": 2, "maxLength": 50},
+        "email": {"type": "string", "format": "email", "maxLength": 100},
+        "password": {"type": "string", "minLength": 8},
+        "degree_id": {"type": "string", "minLength": 2, "maxLength": 30}
+    },
+    "additionalProperties": False
+}
+
 # 3. Helper per determinare la chiave on-chain (Namespacing)
 def build_user_key(matricola: str) -> str:
     """Costruisce la chiave logica deterministica per il World State di Fabric."""

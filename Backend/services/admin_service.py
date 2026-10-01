@@ -164,3 +164,72 @@ class AdminService:
 
         LispClient.add_kv("Careers", career_key, career)
         return {"success": True, "data": career}
+    
+    # Aggiungere in services/admin_service.py
+
+import time
+import bcrypt
+from fabric.lisp_client import LispClient
+from schemas.user_schema import build_user_key
+from schemas.grade_schema import build_career_key
+
+class AdminService:
+    # ... altri metodi già esistenti ...
+
+    @staticmethod
+    def enroll_student(data: dict) -> dict:
+        """
+        Registra lo studente on-chain e contestualmente inizializza la sua carriera.
+        """
+        matricola = data["matricola"]
+        now = int(time.time())
+        user_key = build_user_key(matricola)
+        career_key = build_career_key(matricola)
+
+        # 1. Verifica collisioni: la matricola non deve già esistere
+        if LispClient.get_kv("Users", user_key).get("value"):
+            return {"success": False, "error": f"Matricola {matricola} già registrata", "code": "CONFLICT"}
+
+        # 2. Hashing della password con bcrypt
+        salt = bcrypt.gensalt()
+        pwd_hash = bcrypt.hashpw(data["password"].encode("utf-8"), salt).decode("utf-8")
+
+        # 3. Payload Identità Utente
+        user_payload = {
+            "matricola": matricola,
+            "roles": ["STUDENTE"],
+            "name": data["name"],
+            "surname": data["surname"],
+            "email": data["email"],
+            "password_hash": pwd_hash,
+            "status": "ACTIVE",
+            "created_at": now,
+            "updated_at": now
+        }
+
+        # 4. Payload Carriera Accademica Inizializzata
+        career_payload = {
+            "student_matricola": matricola,
+            "degree_id": data["degree_id"],
+            "cfu_total": 0,
+            "status": "ENROLLED",
+            "passed_exams": [],
+            "graduation_request_date": None,
+            "enrolled_at": now,
+            "last_updated": now
+        }
+
+        # 5. Scrittura on-chain (Users e Careers)
+        res_user = LispClient.add_kv("Users", user_key, user_payload)
+        if res_user.get("status") == "ERROR":
+            return {"success": False, "error": "Errore creazione utente su Fabric", "code": "FABRIC_ERR"}
+
+        res_career = LispClient.add_kv("Careers", career_key, career_payload)
+        if res_career.get("status") == "ERROR":
+            return {"success": False, "error": "Errore inizializzazione carriera su Fabric", "code": "FABRIC_ERR"}
+
+        return {
+            "success": True,
+            "matricola": matricola,
+            "message": "Studente immatricolato con successo e carriera inizializzata"
+        }

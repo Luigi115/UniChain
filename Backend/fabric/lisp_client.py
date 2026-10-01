@@ -25,7 +25,7 @@ class LispClient:
         if value is not None:
             envelope["value"] = value
 
-        payload = json.dumps(envelope)
+        payload = json.dumps(envelope) + "\n"
 
         # 2. Apriamo la comunicazione TCP (il socket)
         try:

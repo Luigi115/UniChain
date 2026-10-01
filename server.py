@@ -1,7 +1,15 @@
-print("Sono il server di Gigi")
+import os
+import sys
 
-# qui devi scrivere il server flask
-# per raggiungerlo da fuori, devi mettere l'ip pubblico del server
-# ip server:  160.80.216.209
-# flask non te lo fa fare, devi usare oltere a flask, gunicorn
-# DEVI USARE GLI ENVIROMENT
+# Aggiunge la cartella Backend al path di ricerca dei moduli
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "Backend"))
+
+from Backend.app import create_app
+
+# Istanzia l'applicazione Flask
+app = create_app()
+
+if __name__ == "__main__":
+    print("🚀 Avvio del Security Gateway UniChain...")
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port, debug=True)
