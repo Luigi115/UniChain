@@ -19,6 +19,14 @@ EXAM_SESSION_CREATE_SCHEMA = {
             "minLength": 2,
             "maxLength": 20
         },
+        "academic_year": {
+            "type": "string",
+            "pattern": r"^[0-9]{4}/[0-9]{4}$"  # es. 2025/2026
+        },
+        "session_period": {
+            "type": "string",
+            "enum": ["INVERNALE", "ESTIVA", "AUTUNNALE", "STRAORDINARIA"]
+        },
         "exam_date": {
             "type": "integer",
             "minimum": 0
@@ -42,6 +50,8 @@ EXAM_SESSION_CREATE_SCHEMA = {
     },
     "required": [
         "course_id",
+        "academic_year",
+        "session_period",
         "exam_date",
         "reg_start_date",
         "reg_end_date",
@@ -70,6 +80,14 @@ EXAM_SESSION_ONCHAIN_SCHEMA = {
             "type": "string",
             "pattern": r"^[0-9]{7}$"
         },
+        "academic_year": {
+            "type": "string",
+            "pattern": r"^[0-9]{4}/[0-9]{4}$"
+        },
+        "session_period": {
+            "type": "string",
+            "enum": ["INVERNALE", "ESTIVA", "AUTUNNALE", "STRAORDINARIA"]
+        },
         "exam_date": {
             "type": "integer",
             "minimum": 0
@@ -94,6 +112,10 @@ EXAM_SESSION_ONCHAIN_SCHEMA = {
             "type": "string",
             "enum": ["OPEN", "CLOSED", "RECORDED", "CANCELLED"]
         },
+        "cancelled_at": {
+            "type": ["integer", "null"],
+            "minimum": 0
+        },
         "created_at": {
             "type": "integer",
             "minimum": 0
@@ -103,6 +125,8 @@ EXAM_SESSION_ONCHAIN_SCHEMA = {
         "session_id",
         "course_id",
         "docente_matricola",
+        "academic_year",
+        "session_period",
         "exam_date",
         "reg_start_date",
         "reg_end_date",
@@ -160,6 +184,14 @@ EXAM_BOOKING_ONCHAIN_SCHEMA = {
         "status": {
             "type": "string",
             "enum": ["CONFIRMED", "CANCELLED"]
+        },
+        "cancelled_reason": {
+            "type": ["string", "null"],
+            "maxLength": 100
+        },
+        "cancelled_at": {
+            "type": ["integer", "null"],
+            "minimum": 0
         },
         "notes": {
             "type": ["string", "null"],

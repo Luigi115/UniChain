@@ -24,26 +24,37 @@ docente_bp = Blueprint("docente_bp", __name__, url_prefix="/api/v1")
 def create_exam_session():
     """
     POST /api/v1/exams/sessions
-    Crea una nuova sessione d'esame nel World State.
+    Crea una nuova sessione d'esame nel World State (classe Appelli).
+    Verifica quote di sessione (max 2 ordinari, max 1 straordinario)
+    e coerenza temporale delle iscrizioni.
     """
     data = request.get_json() or {}
 
+    # 1. Validazione formale contro JSON Schema (Livello 2)
     try:
         validate_schema(data, EXAM_SESSION_CREATE_SCHEMA)
     except jsonschema.exceptions.ValidationError as e:
-        return jsonify({"status": "FAILED", "code": "VALIDATION_ERR", "message": e.message}), 400
+        return jsonify({
+            "status": "FAILED",
+            "code": "VALIDATION_ERR",
+            "message": e.message
+        }), 400
 
+    # 2. Invocazione Business Logic Engine (Livello 3)
     docente_matr = g.current_user["matricola"]
     result = ExamService.create_exam_session(
         docente_matricola=docente_matr,
         course_id=data["course_id"],
+        academic_year=data["academic_year"],
+        session_period=data["session_period"],
+        session_type=data["session_type"],
         exam_date=data["exam_date"],
         reg_start_date=data["reg_start_date"],
         reg_end_date=data["reg_end_date"],
-        session_type=data["session_type"],
         max_seats=data.get("max_seats")
     )
 
+    # 3. Gestione errori applicativi o di quota
     if not result.get("success"):
         return jsonify({
             "status": "FAILED",
