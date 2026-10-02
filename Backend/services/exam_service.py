@@ -124,13 +124,14 @@ class ExamService:
         now = int(time.time())
         exam_key = build_exam_key(session_id)
 
+        # 1. Recupero appello dal World State
         res_exam = LispClient.get_kv("Appelli", exam_key)
         appello = res_exam.get("value") if isinstance(res_exam, dict) and "value" in res_exam else res_exam
 
         if not appello:
             return {"success": False, "error": "Appello d'esame inesistente", "code": "NOT_FOUND"}
 
-        # Verifica esclusività cattedra (Anomalia U3)
+        # 2. Verifica esclusività della cattedra (Anomalia U3)
         if appello.get("docente_matricola") != docente_matricola:
             return {
                 "success": False,
@@ -138,7 +139,7 @@ class ExamService:
                 "code": "U3"
             }
 
-        # Verifica stato operativo
+        # 3. Verifica stato operativo (solo appelli OPEN sono revocabili)
         if appello.get("status") != "OPEN":
             return {
                 "success": False,
@@ -146,7 +147,7 @@ class ExamService:
                 "code": "INVALID_STATUS"
             }
 
-        # Verifica temporale: non cancellabile a esame già avvenuto (Anomalia U1)
+        # 4. Verifica coerenza temporale: non cancellabile se l'esame è già avvenuto (Anomalia U1)
         if now > appello.get("exam_date", 0):
             return {
                 "success": False,
@@ -154,7 +155,7 @@ class ExamService:
                 "code": "U1"
             }
 
-        # Revoca a cascata di tutte le prenotazioni attive per questo appello
+        # 5. Invalidazione a cascata di tutte le prenotazioni attive
         res_keys = LispClient.execute("GetKeys", "Prenotazioni")
         booking_keys = res_keys.get("keys", []) if isinstance(res_keys, dict) else []
         prefix = f"prenotazione:{session_id}:"
@@ -169,10 +170,17 @@ class ExamService:
                     b_data["cancelled_at"] = now
                     LispClient.add_kv("Prenotazioni", b_key, b_data)
 
-        # Commutazione dello stato dell'appello a CANCELLED
+        # 6. Aggiornamento dello stato dell'appello sul World State
         appello["status"] = "CANCELLED"
         appello["cancelled_at"] = now
-        LispClient.add_kv("Appelli", exam_key, appello)
+        res_add = LispClient.add_kv("Appelli", exam_key, appello)
+
+        if res_add.get("status") == "ERROR":
+            return {
+                "success": False,
+                "error": res_add.get("message", "Errore persistenza Fabric"),
+                "code": "FABRIC_ERR"
+            }
 
         return {"success": True, "data": appello}
 

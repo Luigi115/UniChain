@@ -123,6 +123,25 @@ STUDENT_ENROLLMENT_SCHEMA = {
     "additionalProperties": False
 }
 
+USER_LOGIN_SCHEMA = {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "UserLoginPayload",
+    "type": "object",
+    "properties": {
+        "matricola": {
+            "type": "string",
+            "pattern": r"^[0-9]{7}$"
+        },
+        "password": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 128
+        }
+    },
+    "required": ["matricola", "password"],
+    "additionalProperties": False
+}
+
 # 3. Helper per determinare la chiave on-chain (Namespacing)
 def build_user_key(matricola: str) -> str:
     """Costruisce la chiave logica deterministica per il World State di Fabric."""

@@ -152,3 +152,29 @@ def get_grade_history(session_id: str, student_matricola: str):
     """
     result = GradeService.get_grade_history(session_id, student_matricola)
     return jsonify({"status": "SUCCESS", "history": result.get("history", [])}), 200
+
+@docente_bp.route("/exams/sessions/<session_id>", methods=["DELETE"])
+@require_role(["DOCENTE"])
+def cancel_exam_session(session_id: str):
+    """
+    DELETE /api/v1/exams/sessions/<session_id>
+    Data Path 3.3: Consente al docente titolare di revocare un appello d'esame.
+    Intercetta Anomalia U3 (non titolare) e U1 (esame già svolto).
+    """
+    docente_matr = g.current_user["matricola"]
+    result = ExamService.cancel_exam_session(session_id, docente_matr)
+
+    if not result.get("success"):
+        # HTTP 403 in caso di violazione RBAC / cattedra (U3), altrimenti HTTP 400
+        status_code = 403 if result.get("code") == "U3" else 400
+        return jsonify({
+            "status": "FAILED",
+            "code": result.get("code"),
+            "message": result.get("error")
+        }), status_code
+
+    return jsonify({
+        "status": "SUCCESS",
+        "message": f"Sessione {session_id} revocata con successo",
+        "session": result["data"]
+    }), 200
