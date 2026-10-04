@@ -26,7 +26,7 @@ admin_bp = Blueprint("admin_bp", __name__, url_prefix="/api/v1")
 
 
 @admin_bp.route("/users/register", methods=["POST"])
-@require_role(["SEGRETERIA"])
+#@require_role(["SEGRETERIA"])
 def register_user():
     """
     POST /api/v1/users/register
@@ -59,7 +59,7 @@ def register_user():
 
 
 @admin_bp.route("/users/<matricola>", methods=["GET"])
-@require_role(["SEGRETERIA"])
+#@require_role(["SEGRETERIA"])
 def get_user_profile(matricola: str):
     """
     GET /api/v1/users/<matricola>
