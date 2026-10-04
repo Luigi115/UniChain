@@ -45,12 +45,6 @@ def _execute_login(expected_role: str | None = None):
     }), 200
 
 
-# 1. Endpoint Login Segreteria
-@auth_bp.route("/admin-login", methods=["POST"])
-def admin_login():
-    return _execute_login(expected_role="SEGRETERIA")
-
-
 # 2. Endpoint Login Docente
 @auth_bp.route("/docente-login", methods=["POST"])
 def docente_login():
@@ -61,14 +55,6 @@ def docente_login():
 @auth_bp.route("/student-login", methods=["POST"])
 def student_login():
     return _execute_login(expected_role="STUDENTE")
-
-
-@auth_bp.route("/profile", methods=["GET"])
-@require_role(["SEGRETERIA", "DOCENTE", "STUDENTE"])
-def get_profile():
-    current_user = getattr(g, "current_user", {})
-    return jsonify({"status": "SUCCESS", "user": current_user}), 200
-
 
 @auth_bp.route("/profile", methods=["GET"])
 @require_role(["SEGRETERIA", "DOCENTE", "STUDENTE"])
