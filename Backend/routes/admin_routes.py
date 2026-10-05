@@ -24,6 +24,10 @@ from fabric.lisp_client import LispClient
 
 admin_bp = Blueprint("admin_bp", __name__, url_prefix="/api/v1")
 
+@admin_bp.route("/hello", methods=["GET"])
+def hello ():
+    return jsonify({"hello world": "sve"}), 200
+
 
 @admin_bp.route("/users/register", methods=["POST"])
 #@require_role(["SEGRETERIA"])
